@@ -809,16 +809,48 @@ create policy at_write on announcement_targets for all using (
   exists (select 1 from announcements a where a.id = announcement_targets.announcement_id and (a.author_id = auth.uid() or user_has_school_role(a.school_id, array['school_admin']::user_role[])))
 );
 
--- messages: sender or recipient only
+create or replace function can_access_message(p_message_id uuid)
+returns boolean language sql stable security definer as $$
+  select exists (
+    select 1
+    from messages m
+    where m.id = p_message_id
+      and (
+        is_super_admin()
+        or user_has_school_role(m.school_id, array['school_admin']::user_role[])
+        or m.sender_id = auth.uid()
+        or exists (
+          select 1
+          from message_recipients r
+          where r.message_id = m.id
+            and r.recipient_id = auth.uid()
+        )
+      )
+  );
+$$;
+
+create or replace function can_access_message_recipient(p_message_id uuid, p_recipient_id uuid)
+returns boolean language sql stable security definer as $$
+  select exists (
+    select 1
+    from messages m
+    where m.id = p_message_id
+      and (
+        is_super_admin()
+        or user_has_school_role(m.school_id, array['school_admin']::user_role[])
+        or m.sender_id = auth.uid()
+        or p_recipient_id = auth.uid()
+      )
+  );
+$$;
+
+-- messages: school admins can review all school messages; others see sent or received only
 create policy msg_select on messages for select using (
-  (deleted_at is null or is_super_admin()) and (
-    sender_id = auth.uid()
-    or exists (select 1 from message_recipients r where r.message_id = messages.id and r.recipient_id = auth.uid())
-  )
+  (deleted_at is null or is_super_admin()) and can_access_message(id)
 );
 create policy msg_insert on messages for insert with check ( sender_id = auth.uid() );
 create policy mr_select on message_recipients for select using (
-  recipient_id = auth.uid() or exists (select 1 from messages m where m.id = message_recipients.message_id and m.sender_id = auth.uid())
+  can_access_message_recipient(message_id, recipient_id)
 );
 create policy mr_update on message_recipients for update using ( recipient_id = auth.uid() );
 

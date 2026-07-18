@@ -35,8 +35,13 @@ export default defineConfig({
   assetsInclude: ['**/*.svg', '**/*.csv'],
 
   server: {
+    host: 'localhost',
+    port: 5173,
+    strictPort: true,
     hmr: {
-      protocol: 'wss',
+      protocol: 'ws',
+      host: 'localhost',
+      clientPort: 5173,
     },
   },
 })

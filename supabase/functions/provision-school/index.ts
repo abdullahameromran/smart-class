@@ -106,4 +106,83 @@ Deno.serve(async (req) => {
       adminUserId = invited.user!.id;
     }
 
-    await admin.from("pr
+    await admin.from("profiles").upsert({
+      id: adminUserId,
+      email: admin_email,
+      first_name: admin_first_name,
+      last_name: admin_last_name,
+    });
+
+    const { error: roleErr } = await admin.from("user_school_roles").insert({
+      user_id: adminUserId,
+      school_id: school.id,
+      role: "school_admin",
+    });
+    if (roleErr) return json({ error: roleErr.message }, 400);
+
+    await admin.from("audit_logs").insert({
+      school_id: school.id,
+      actor_id: callerId,
+      action: "provision_school",
+      entity_type: "schools",
+      entity_id: school.id,
+      metadata: { admin_email, plan_id },
+    });
+
+    return json({ school, admin_user_id: adminUserId }, 200);
+  } catch (e) {
+    return json({ error: String(e) }, 500);
+  }
+});
+
+async function generateUniqueSchoolSlug(baseSlug: string) {
+  let candidate = baseSlug;
+  let suffix = 2;
+
+  while (true) {
+    const { data: existing, error } = await admin
+      .from("schools")
+      .select("id")
+      .eq("slug", candidate)
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    if (!existing) {
+      return candidate;
+    }
+    candidate = `${baseSlug}-${suffix}`;
+    suffix += 1;
+  }
+}
+
+function slugify(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function handleCors(req: Request) {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+  return null;
+}
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      ...corsHeaders,
+    },
+  });
+}

@@ -26,6 +26,7 @@ import {
 import { hasSupabaseEnv, supabase, supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
 
 type UserRole = "super_admin" | "school_admin" | "teacher" | "student" | "parent";
+type SettingValueType = "text" | "number" | "boolean" | "list" | "pairs";
 
 type BasicProfile = {
   id: string;
@@ -91,7 +92,7 @@ type SchoolSubscription = {
 
 type PlatformSetting = {
   key: string;
-  value: Record<string, unknown> | string | number | boolean | null;
+  value: unknown;
 };
 
 type AuditLogRecord = {
@@ -689,6 +690,178 @@ function parseName(value: string) {
     first_name: parts[0] ?? "",
     last_name: parts.slice(1).join(" "),
   };
+}
+
+function titleCaseLabel(value: string) {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function normalizeLineList(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function keyFromLabel(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function parseLooseScalar(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const lowered = trimmed.toLowerCase();
+  if (lowered === "true") return true;
+  if (lowered === "false") return false;
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+  return trimmed;
+}
+
+function formatEditorScalar(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number" || typeof value === "string") return String(value);
+  if (Array.isArray(value)) return value.map((item) => formatEditorScalar(item)).join(", ");
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => `${titleCaseLabel(key)} ${formatEditorScalar(item)}`.trim())
+      .join(", ");
+  }
+  return String(value);
+}
+
+function formatInlineValue(value: unknown): string {
+  if (value == null || value === "") return "Empty";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "number" || typeof value === "string") return String(value);
+  if (Array.isArray(value)) return value.map((item) => formatInlineValue(item)).join(", ");
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => `${titleCaseLabel(key)}: ${formatInlineValue(item)}`)
+      .join(", ");
+  }
+  return String(value);
+}
+
+function planFeaturesToEditorValue(features: Plan["features"]) {
+  if (!features) return "";
+  return Object.entries(features)
+    .flatMap(([key, value]) => {
+      if (value === false || value == null || value === "") return [];
+      if (value === true) return [titleCaseLabel(key)];
+      return [`${titleCaseLabel(key)}: ${formatEditorScalar(value)}`];
+    })
+    .join("\n");
+}
+
+function planFeaturesToList(features: Plan["features"]) {
+  if (!features) return [] as string[];
+  return Object.entries(features).flatMap(([key, value]) => {
+    if (value === false || value == null || value === "") return [];
+    if (value === true) return [titleCaseLabel(key)];
+    return [`${titleCaseLabel(key)}: ${formatInlineValue(value)}`];
+  });
+}
+
+function parsePlanFeaturesInput(value: string) {
+  const features: Record<string, unknown> = {};
+  for (const line of normalizeLineList(value)) {
+    const separatorIndex = line.search(/[:=]/);
+    const label = separatorIndex === -1 ? line : line.slice(0, separatorIndex);
+    const rawValue = separatorIndex === -1 ? "" : line.slice(separatorIndex + 1).trim();
+    const key = keyFromLabel(label);
+    if (!key) continue;
+    features[key] = rawValue ? parseLooseScalar(rawValue) : true;
+  }
+  return features;
+}
+
+function inferSettingValueType(value: unknown): SettingValueType {
+  if (typeof value === "boolean") return "boolean";
+  if (typeof value === "number") return "number";
+  if (Array.isArray(value)) return "list";
+  if (value && typeof value === "object") return "pairs";
+  return "text";
+}
+
+function settingValueToEditorState(value: unknown) {
+  const valueType = inferSettingValueType(value);
+  if (valueType === "boolean") {
+    return {
+      valueType,
+      valueInput: "",
+      booleanValue: value ? "true" : "false",
+    };
+  }
+  if (valueType === "number") {
+    return {
+      valueType,
+      valueInput: String(value),
+      booleanValue: "false" as const,
+    };
+  }
+  if (valueType === "list") {
+    return {
+      valueType,
+      valueInput: (value as unknown[]).map((item) => formatEditorScalar(item)).join("\n"),
+      booleanValue: "false" as const,
+    };
+  }
+  if (valueType === "pairs") {
+    return {
+      valueType,
+      valueInput: Object.entries(value as Record<string, unknown>)
+        .map(([key, item]) => `${key} = ${formatEditorScalar(item)}`)
+        .join("\n"),
+      booleanValue: "false" as const,
+    };
+  }
+  return {
+    valueType,
+    valueInput: value == null ? "" : String(value),
+    booleanValue: "false" as const,
+  };
+}
+
+function parseSettingPairsInput(value: string) {
+  const entries: [string, unknown][] = [];
+  for (const line of normalizeLineList(value)) {
+    const separatorIndex = line.search(/[:=]/);
+    if (separatorIndex === -1) {
+      throw new Error("Use one key/value pair per line, like support_email = help@school.com.");
+    }
+    const key = line.slice(0, separatorIndex).trim();
+    const rawValue = line.slice(separatorIndex + 1).trim();
+    if (!key) {
+      throw new Error("Every key/value line needs a key before =.");
+    }
+    entries.push([key, parseLooseScalar(rawValue)]);
+  }
+  return Object.fromEntries(entries);
+}
+
+function formatSettingValue(value: unknown) {
+  if (typeof value === "boolean") return value ? "Enabled" : "Disabled";
+  if (typeof value === "number") return String(value);
+  if (typeof value === "string") return value || "Empty";
+  if (Array.isArray(value)) {
+    return value.length ? value.map((item) => `- ${formatInlineValue(item)}`).join("\n") : "Empty list";
+  }
+  if (value && typeof value === "object") {
+    const lines = Object.entries(value as Record<string, unknown>).map(
+      ([key, item]) => `${titleCaseLabel(key)}: ${formatInlineValue(item)}`,
+    );
+    return lines.length ? lines.join("\n") : "No values";
+  }
+  return "Empty";
 }
 
 function targetSummary(
@@ -1912,7 +2085,7 @@ async function loadParentData(schoolId: string, currentUserId: string) {
 
 async function loadWorkspaceData(workspace: Workspace, currentUserId: string) {
   if (workspace.role === "super_admin") return loadSuperAdminData();
-  if (!workspace.schoolId) throw new Error("A school-scoped role is missing school context.");
+  if (!workspace.schoolId) throw new Error("This school access record is incomplete.");
   if (workspace.role === "school_admin") return loadSchoolAdminData(workspace.schoolId, currentUserId);
   if (workspace.role === "teacher") return loadTeacherData(workspace.schoolId, currentUserId);
   if (workspace.role === "student") return loadStudentData(workspace.schoolId, currentUserId);
@@ -2096,56 +2269,58 @@ function WorkspaceShell({
   children: ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex min-h-screen max-w-[1600px]">
-        <aside className="hidden w-72 shrink-0 border-r border-border bg-card/90 px-5 py-6 backdrop-blur md:flex md:flex-col">
-          <div className="rounded-2xl bg-secondary p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-primary">Smart Class</p>
-            <h1 className="mt-2 text-2xl font-bold">{workspace.schoolName}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">{ROLE_LABELS[workspace.role]}</p>
-          </div>
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(17,24,39,0.06),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.08),_transparent_26%)] text-foreground md:h-screen md:overflow-hidden">
+      <div className="mx-auto flex min-h-screen max-w-[1600px] md:h-full md:px-4 md:py-4">
+        <aside className="hidden w-80 shrink-0 md:flex md:pr-4">
+          <div className="sticky top-4 flex h-[calc(100vh-2rem)] w-full flex-col rounded-[2rem] border border-border/70 bg-card/92 px-5 py-6 shadow-[0_24px_70px_rgba(15,23,42,0.12)] backdrop-blur">
+            <div className="rounded-[1.5rem] bg-secondary p-4 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Smart Class</p>
+              <h1 className="mt-2 text-2xl font-bold">{workspace.schoolName}</h1>
+              <p className="mt-1 text-sm text-muted-foreground">{ROLE_LABELS[workspace.role]}</p>
+            </div>
 
-          <nav className="mt-6 space-y-1">
-            {navItems.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => onSelect(item.id)}
-                className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-semibold transition ${
-                  activeView === item.id
-                    ? "bg-primary text-white shadow-sm"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                }`}
-              >
-                {item.icon}
-                {item.label}
-              </button>
-            ))}
-          </nav>
+            <nav className="mt-6 flex-1 space-y-1 overflow-y-auto pr-1">
+              {navItems.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => onSelect(item.id)}
+                  className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition ${
+                    activeView === item.id
+                      ? "bg-primary text-white shadow-[0_16px_30px_rgba(37,99,235,0.22)]"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  {item.icon}
+                  {item.label}
+                </button>
+              ))}
+            </nav>
 
-          <div className="mt-auto rounded-2xl border border-border bg-muted/40 p-4">
-            <p className="text-sm font-semibold">{fullName(profile)}</p>
-            <p className="text-xs text-muted-foreground">{profile.email}</p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Button variant="secondary" className="flex-1" onClick={onSwitchWorkspace}>
-                Switch
-              </Button>
-              <Button variant="ghost" className="flex-1" onClick={onSignOut}>
-                <LogOut className="w-4 h-4" />
-                Sign out
-              </Button>
+            <div className="mt-5 rounded-[1.5rem] border border-border bg-muted/45 p-4">
+              <p className="text-sm font-semibold">{fullName(profile)}</p>
+              <p className="text-xs text-muted-foreground">{profile.email}</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button variant="secondary" className="flex-1" onClick={onSwitchWorkspace}>
+                  Switch
+                </Button>
+                <Button variant="ghost" className="flex-1" onClick={onSignOut}>
+                  <LogOut className="w-4 h-4" />
+                  Sign out
+                </Button>
+              </div>
             </div>
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1 px-4 py-4 md:px-8 md:py-6">
-          <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <main className="min-w-0 flex-1 px-4 py-4 md:h-full md:overflow-y-auto md:rounded-[2rem] md:border md:border-border/60 md:bg-card/30 md:px-8 md:py-6 md:shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
+          <div className="mb-6 flex flex-col gap-3 md:sticky md:top-0 md:z-10 md:-mx-2 md:rounded-[1.5rem] md:border md:border-border/60 md:bg-background/90 md:px-2 md:py-3 md:backdrop-blur md:flex-row md:items-center md:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-primary">{ROLE_LABELS[workspace.role]}</p>
               <h2 className="text-2xl font-bold">{workspace.schoolName}</h2>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button variant="secondary" onClick={onSwitchWorkspace}>
-                Switch workspace
+                Switch view
               </Button>
               <Button variant="secondary" onClick={onRefresh} disabled={loading}>
                 <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
@@ -2215,10 +2390,9 @@ function ConfigScreen() {
             <AlertCircle className="w-6 h-6 text-red-600" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold">Supabase config is missing</h1>
+            <h1 className="text-2xl font-bold">Smart Class needs setup</h1>
             <p className="mt-2 text-sm text-muted-foreground">
-              Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to `.env.local`. I already prepared
-              `.env.example`, and this repo now expects the live app to authenticate and read data through Supabase.
+              Add the app connection details to `.env.local` using `.env.example` as a guide, then reload the page.
             </p>
           </div>
         </div>
@@ -2312,26 +2486,23 @@ function AuthScreen({
       <div className="relative mx-auto grid w-full max-w-5xl gap-6 lg:grid-cols-[1.08fr_0.92fr]">
         <div className="rounded-[2rem] border border-border bg-card/95 p-8 shadow-[0_30px_80px_rgba(28,27,58,0.08)] backdrop-blur">
           <Badge>Smart Class</Badge>
-          <h1 className="mt-4 text-4xl font-bold leading-tight">
-            Live school operations, connected to your deployed Supabase backend.
-          </h1>
+          <h1 className="mt-4 text-4xl font-bold leading-tight">Run your school in one connected place.</h1>
           <p className="mt-4 max-w-2xl text-base text-muted-foreground">
-            This app now authenticates against project `tkhmeczupudwsqkluztz`, resolves the user’s real role and
-            school memberships, and loads portal data through your existing schema, RLS policies, and edge functions.
+            Sign in to manage schools, people, classes, learning, and communication from one shared dashboard.
           </p>
           <div className="mt-8 grid gap-4 md:grid-cols-3">
-            <StatCard label="Auth" value="Live" sub="Password + magic link" />
-            <StatCard label="Backend" value="Supabase" sub="RLS-first multi-tenant schema" />
-            <StatCard label="Functions" value="Connected" sub="Provision, invite, export, notify" />
+            <StatCard label="Access" value="Ready" sub="Password + magic link" />
+            <StatCard label="Schools" value="Connected" sub="Live people, classes, and records" />
+            <StatCard label="Actions" value="Built in" sub="Setup, invites, exports, and alerts" />
           </div>
           <div className="mt-8 rounded-2xl bg-muted/40 p-5">
-            <p className="text-sm font-semibold text-foreground">First time setting up this project?</p>
+            <p className="text-sm font-semibold text-foreground">First time opening Smart Class?</p>
             <p className="mt-2 text-sm text-muted-foreground">
               1. Create an account here.
               <br />
               2. Sign in.
               <br />
-              3. If no roles exist yet, use the one-time bootstrap action on the next screen.
+              3. If no access appears yet, use the one-time setup button on the next screen.
             </p>
           </div>
         </div>
@@ -2412,10 +2583,10 @@ function NoWorkspaceScreen({
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(124,92,191,0.18),_transparent_32%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.12),_transparent_28%)]" />
       <div className="relative mx-auto w-full max-w-3xl rounded-[2rem] border border-border bg-card/95 p-8 shadow-[0_30px_80px_rgba(28,27,58,0.08)] backdrop-blur">
-        <Badge>No workspace yet</Badge>
-        <h1 className="mt-5 text-3xl font-bold">This account is signed in, but it has no active role yet.</h1>
+        <Badge>No access yet</Badge>
+        <h1 className="mt-5 text-3xl font-bold">This account is signed in, but it does not have access yet.</h1>
         <p className="mt-3 text-sm text-muted-foreground">
-          {error || "If this is the first account in a fresh project, bootstrap it as the initial super admin. Otherwise, ask an existing admin to invite this email into a school."}
+          {error || "If this is the first account for a new setup, you can give it owner access once. Otherwise, ask an existing admin to invite this email."}
         </p>
 
         <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -2427,17 +2598,17 @@ function NoWorkspaceScreen({
           <div className="rounded-2xl bg-muted/40 p-5">
             <p className="text-sm font-semibold">What to do next</p>
             <p className="mt-2 text-sm text-muted-foreground">
-              Use bootstrap only once for a brand-new project. If your platform is already set up, do not bootstrap again.
+              Use first-time setup only once for a brand-new system. If schools are already set up, ask an existing admin to give this account access.
             </p>
           </div>
         </div>
 
         <div className="mt-8 flex flex-wrap gap-3">
           <Button onClick={onBootstrap} disabled={busy}>
-            {busy ? "Bootstrapping..." : "Bootstrap first super admin"}
+            {busy ? "Setting up..." : "Run first-time setup"}
           </Button>
           <Button variant="secondary" onClick={onRefresh} disabled={busy}>
-            Refresh roles
+            Refresh access
           </Button>
           <Button variant="ghost" onClick={onSignOut} disabled={busy}>
             Sign out
@@ -2464,10 +2635,10 @@ function WorkspacePicker({
       <div className="mx-auto max-w-6xl">
         <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-primary">Choose workspace</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-primary">Choose dashboard</p>
             <h1 className="text-3xl font-bold">{fullName(profile)}</h1>
             <p className="mt-2 text-sm text-muted-foreground">
-              This account has multiple active roles or schools. Pick the workspace you want to open.
+              This account can open more than one school or role. Choose where you want to go.
             </p>
           </div>
           <Button variant="ghost" onClick={onSignOut}>
@@ -2486,10 +2657,10 @@ function WorkspacePicker({
               <Badge>{ROLE_LABELS[workspace.role]}</Badge>
               <h2 className="mt-4 text-xl font-bold">{workspace.schoolName}</h2>
               <p className="mt-2 text-sm text-muted-foreground">
-                {workspace.school ? `${workspace.school.slug} / ${workspace.school.timezone}` : "Platform scope"}
+                {workspace.school ? `${workspace.school.slug} / ${workspace.school.timezone}` : "All schools"}
               </p>
               <div className="mt-6 flex items-center gap-2 text-sm font-semibold text-primary">
-                Open workspace
+                Open dashboard
               </div>
             </button>
           ))}
@@ -2524,7 +2695,9 @@ function SuperAdminPortal({
   });
   const [settingForm, setSettingForm] = useState({
     key: "",
-    value: "{\n  \n}",
+    valueType: "text" as SettingValueType,
+    valueInput: "",
+    booleanValue: "false" as "true" | "false",
   });
   const [planForm, setPlanForm] = useState({
     id: "",
@@ -2533,7 +2706,7 @@ function SuperAdminPortal({
     max_teachers: "",
     price_cents: "0",
     billing_cycle: "monthly",
-    features: "{\n  \n}",
+    featuresInput: "",
     is_active: true,
   });
   const [roleForm, setRoleForm] = useState({
@@ -2671,8 +2844,27 @@ function SuperAdminPortal({
       max_teachers: "",
       price_cents: "0",
       billing_cycle: "monthly",
-      features: "{\n  \n}",
+      featuresInput: "",
       is_active: true,
+    });
+  };
+
+  const resetSettingForm = () => {
+    setSettingForm({
+      key: "",
+      valueType: "text",
+      valueInput: "",
+      booleanValue: "false",
+    });
+  };
+
+  const loadSettingIntoForm = (setting: PlatformSetting) => {
+    const next = settingValueToEditorState(setting.value);
+    setSettingForm({
+      key: setting.key,
+      valueType: next.valueType,
+      valueInput: next.valueInput,
+      booleanValue: next.booleanValue,
     });
   };
 
@@ -2744,20 +2936,34 @@ function SuperAdminPortal({
     event.preventDefault();
     try {
       setBusy(true);
-      let parsed: unknown = settingForm.value;
-      try {
-        parsed = JSON.parse(settingForm.value);
-      } catch {
-        parsed = settingForm.value;
+      const key = settingForm.key.trim();
+      if (!key) {
+        throw new Error("Setting key is required.");
+      }
+      let parsed: unknown;
+      if (settingForm.valueType === "boolean") {
+        parsed = settingForm.booleanValue === "true";
+      } else if (settingForm.valueType === "number") {
+        const numericValue = Number(settingForm.valueInput);
+        if (!Number.isFinite(numericValue)) {
+          throw new Error("Enter a valid number for this setting.");
+        }
+        parsed = numericValue;
+      } else if (settingForm.valueType === "list") {
+        parsed = normalizeLineList(settingForm.valueInput);
+      } else if (settingForm.valueType === "pairs") {
+        parsed = parseSettingPairsInput(settingForm.valueInput);
+      } else {
+        parsed = settingForm.valueInput.trim();
       }
       unwrap(
         await supabase.from("platform_settings").upsert({
-          key: settingForm.key,
+          key,
           value: parsed,
         }),
       );
       onNotify("success", "Platform setting saved.");
-      setSettingForm({ key: "", value: "{\n  \n}" });
+      resetSettingForm();
       await onRefresh();
     } catch (error) {
       onNotify("error", error instanceof Error ? error.message : "Failed to save setting.");
@@ -2783,14 +2989,7 @@ function SuperAdminPortal({
         throw new Error("Max teachers must be a valid number.");
       }
 
-      let parsedFeatures: Record<string, unknown> = {};
-      if (planForm.features.trim()) {
-        const raw = JSON.parse(planForm.features);
-        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-          throw new Error("Plan features must be a JSON object.");
-        }
-        parsedFeatures = raw as Record<string, unknown>;
-      }
+      const parsedFeatures = parsePlanFeaturesInput(planForm.featuresInput);
 
       const payload: Record<string, unknown> = {
         name: planForm.name,
@@ -2824,7 +3023,7 @@ function SuperAdminPortal({
       max_teachers: plan.max_teachers == null ? "" : String(plan.max_teachers),
       price_cents: String(plan.price_cents),
       billing_cycle: plan.billing_cycle,
-      features: JSON.stringify(plan.features ?? {}, null, 2),
+      featuresInput: planFeaturesToEditorValue(plan.features),
       is_active: plan.is_active,
     });
   };
@@ -2946,7 +3145,7 @@ function SuperAdminPortal({
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-          <Panel title="School Activity" description="Usage stats from `get_school_usage_stats()` plus quick jump into school admin operations.">
+          <Panel title="School Activity" description="See how each school is doing and jump into its dashboard in one click.">
             <div className="space-y-3">
               {data.stats.slice(0, 8).map((row) => (
                 <div key={row.school_id} className="rounded-2xl bg-muted/30 p-4">
@@ -2978,7 +3177,7 @@ function SuperAdminPortal({
           </Panel>
 
           <div className="space-y-6">
-            <Panel title="Platform Activity" description="Recent audit entries from the whole project.">
+            <Panel title="Recent Activity" description="A quick look at the latest actions across all schools.">
               <div className="space-y-3">
                 {data.auditLogs.slice(0, 6).map((row) => (
                   <div key={row.id} className="rounded-2xl bg-muted/30 p-4">
@@ -2994,7 +3193,7 @@ function SuperAdminPortal({
               </div>
             </Panel>
 
-            <Panel title="Subscription Plans" description="Live rows from `subscription_plans`.">
+            <Panel title="Subscription Plans" description="Review the plans schools can use and what each one includes.">
               <div className="space-y-3">
                 {data.plans.map((plan) => (
                   <div key={plan.id} className="rounded-2xl bg-muted/30 p-4">
@@ -3029,7 +3228,7 @@ function SuperAdminPortal({
           <StatCard label="No Role" value={data.profiles.filter((profile) => (roleRowsByUser[profile.id] ?? []).length === 0).length} />
         </div>
 
-        <Panel title="Project Directory" description="Live rows from `profiles`, matched with current role assignments.">
+        <Panel title="Project Directory" description="See everyone in Smart Class and where they belong.">
           <div className="mb-4 max-w-md">
             <Field label="Search people">
               <Input
@@ -3088,7 +3287,7 @@ function SuperAdminPortal({
           <StatCard label="Students" value={data.roleRows.filter((row) => row.role === "student" && row.is_active).length} />
         </div>
 
-        <Panel title="Grant or Reactivate Access" description="Insert or reactivate rows in `user_school_roles`.">
+        <Panel title="Give or Restore Access" description="Choose a person, choose their role, and decide which school they can open.">
           <form className="grid gap-4 lg:grid-cols-[1.3fr_0.8fr_1fr_auto]" onSubmit={saveRoleAssignment}>
             <Field label="User">
               <Select
@@ -3137,7 +3336,7 @@ function SuperAdminPortal({
           </form>
         </Panel>
 
-        <Panel title="Role Assignments" description="Toggle live access rows without leaving the platform console.">
+        <Panel title="Current Access" description="Review access across the platform and turn it on or off when needed.">
           <div className="mb-4 max-w-md">
             <Field label="Search role assignments">
               <Input
@@ -3200,7 +3399,7 @@ function SuperAdminPortal({
           <StatCard label="Past Due" value={currentSubscriptions.filter((subscription) => subscription.status === "past_due").length} />
         </div>
 
-        <Panel title="Create or Update Plan" description="Write directly to `subscription_plans` with super admin privileges.">
+        <Panel title="Create or Update Plan" description="Set the plan name, limits, price, and included features in simple fields.">
           <form className="grid gap-4 lg:grid-cols-2" onSubmit={savePlan}>
             <Field label="Plan name">
               <Input
@@ -3249,13 +3448,17 @@ function SuperAdminPortal({
               />
             </Field>
             <div className="lg:col-span-2">
-              <Field label="Features JSON">
+              <Field label="Plan features">
                 <TextArea
                   rows={6}
-                  value={planForm.features}
-                  onChange={(event) => setPlanForm((prev) => ({ ...prev, features: event.target.value }))}
+                  value={planForm.featuresInput}
+                  onChange={(event) => setPlanForm((prev) => ({ ...prev, featuresInput: event.target.value }))}
+                  placeholder={"Lessons\nHomework\nMonthly tests\nReports: true"}
                 />
               </Field>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Add one feature per line. You can also write Feature: value when you need a simple note or limit.
+              </p>
             </div>
             <div className="flex flex-wrap gap-3 lg:col-span-2">
               <Button type="submit" disabled={busy}>
@@ -3270,7 +3473,7 @@ function SuperAdminPortal({
           </form>
         </Panel>
 
-        <Panel title="Subscription Plans" description="Live rows from `subscription_plans`.">
+        <Panel title="Subscription Plans" description="Review the plans schools can use and what each one includes.">
           <div className="space-y-3">
             {data.plans.map((plan) => (
               <div key={plan.id} className="rounded-2xl border border-border bg-muted/30 p-4">
@@ -3288,6 +3491,13 @@ function SuperAdminPortal({
                     <p className="mt-1 text-xs text-muted-foreground">
                       Max students: {plan.max_students ?? "Unlimited"} / Max teachers: {plan.max_teachers ?? "Unlimited"}
                     </p>
+                    {planFeaturesToList(plan.features).length ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {planFeaturesToList(plan.features).map((feature) => (
+                          <Badge key={`${plan.id}-${feature}`}>{feature}</Badge>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button variant="secondary" onClick={() => editPlan(plan)}>
@@ -3303,7 +3513,7 @@ function SuperAdminPortal({
           </div>
         </Panel>
 
-        <Panel title="School Subscriptions" description="Update current plan and billing status per school.">
+        <Panel title="School Subscriptions" description="Change a school's plan, status, or end date in one place.">
           <div className="space-y-4">
             {currentSubscriptions.length === 0 ? (
               <EmptyState message="No school subscriptions found yet." />
@@ -3380,9 +3590,9 @@ function SuperAdminPortal({
           <StatCard label="Lessons" value={data.counts.lessons.toLocaleString()} />
         </div>
 
-        <Panel title="Recent Audit Activity" description="Latest rows from `audit_logs` across the platform.">
+        <Panel title="Recent Activity History" description="Review the latest important changes across the platform.">
           <div className="mb-4 max-w-md">
-            <Field label="Search audit logs">
+            <Field label="Search activity">
               <Input
                 value={auditQuery}
                 onChange={(event) => setAuditQuery(event.target.value)}
@@ -3392,7 +3602,7 @@ function SuperAdminPortal({
           </div>
           <div className="space-y-3">
             {filteredAuditLogs.length === 0 ? (
-              <EmptyState message="No matching audit logs found." />
+              <EmptyState message="No matching activity found." />
             ) : (
               filteredAuditLogs.map((row) => {
                 const actor = row.actor_id ? profileMap[row.actor_id] : null;
@@ -3412,7 +3622,7 @@ function SuperAdminPortal({
                       </div>
                     </div>
                     <pre className="mt-3 max-h-40 overflow-auto rounded-xl bg-background/80 p-3 text-xs text-muted-foreground">
-                      {JSON.stringify(row.metadata ?? {}, null, 2)}
+                      {formatSettingValue(row.metadata)}
                     </pre>
                   </div>
                 );
@@ -3434,38 +3644,100 @@ function SuperAdminPortal({
           <StatCard label="Messages" value={data.counts.messages.toLocaleString()} />
         </div>
 
-        <Panel title="Platform Settings" description="Direct writes to `platform_settings` for super admins only.">
-          <form className="grid gap-4 lg:grid-cols-[240px_1fr_auto]" onSubmit={saveSetting}>
-            <Field label="Key">
+        <Panel title="System Settings" description="Manage shared names, contact details, reminders, and other platform-wide preferences.">
+          <form className="grid gap-4 lg:grid-cols-[220px_180px_1fr_auto]" onSubmit={saveSetting}>
+            <Field label="Setting name">
               <Input
                 value={settingForm.key}
                 onChange={(event) => setSettingForm((prev) => ({ ...prev, key: event.target.value }))}
                 required
               />
             </Field>
-            <Field label="JSON value">
-              <TextArea
-                rows={4}
-                value={settingForm.value}
-                onChange={(event) => setSettingForm((prev) => ({ ...prev, value: event.target.value }))}
-              />
+            <Field label="Type">
+              <Select
+                value={settingForm.valueType}
+                onChange={(event) =>
+                  setSettingForm((prev) => ({ ...prev, valueType: event.target.value as SettingValueType }))
+                }
+              >
+                <option value="text">Text</option>
+                <option value="number">Number</option>
+                <option value="boolean">Yes / No</option>
+                <option value="list">List</option>
+                <option value="pairs">Named values</option>
+              </Select>
+            </Field>
+            <Field
+              label={
+                settingForm.valueType === "list"
+                  ? "Items"
+                  : settingForm.valueType === "pairs"
+                    ? "Values"
+                    : "Value"
+              }
+            >
+              {settingForm.valueType === "boolean" ? (
+                <Select
+                  value={settingForm.booleanValue}
+                  onChange={(event) => setSettingForm((prev) => ({ ...prev, booleanValue: event.target.value as "true" | "false" }))}
+                >
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </Select>
+              ) : (
+                <TextArea
+                  rows={4}
+                  value={settingForm.valueInput}
+                  onChange={(event) => setSettingForm((prev) => ({ ...prev, valueInput: event.target.value }))}
+                  placeholder={
+                    settingForm.valueType === "list"
+                      ? "Item one\nItem two"
+                      : settingForm.valueType === "pairs"
+                        ? "Support email = help@school.com\nSchool day starts = 8:00 AM"
+                        : settingForm.valueType === "number"
+                          ? "25"
+                          : "Smart Class"
+                  }
+                />
+              )}
+              <p className="mt-1 text-xs text-muted-foreground">
+                {settingForm.valueType === "list"
+                  ? "Write one item per line."
+                  : settingForm.valueType === "pairs"
+                    ? "Write one name and value per line, like Support email = help@school.com."
+                    : settingForm.valueType === "boolean"
+                      ? "Choose whether this setting is on or off."
+                      : "Use a simple value only."}
+              </p>
             </Field>
             <div className="flex items-end">
-              <Button type="submit" disabled={busy}>
-                Save
-              </Button>
+              <div className="flex gap-2">
+                <Button type="submit" disabled={busy}>
+                  Save
+                </Button>
+                <Button type="button" variant="ghost" onClick={resetSettingForm}>
+                  Clear
+                </Button>
+              </div>
             </div>
           </form>
           <div className="mt-6 space-y-3">
             {data.settings.length === 0 ? (
-              <EmptyState message="No platform settings rows yet." />
+              <EmptyState message="No settings have been added yet." />
             ) : (
               data.settings.map((setting) => (
                 <div key={setting.key} className="rounded-2xl border border-border bg-muted/30 p-4">
-                  <p className="text-sm font-semibold">{setting.key}</p>
-                  <pre className="mt-2 overflow-x-auto text-xs text-muted-foreground">
-                    {JSON.stringify(setting.value, null, 2)}
-                  </pre>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold">{setting.key}</p>
+                      <pre className="mt-2 whitespace-pre-wrap text-xs text-muted-foreground">
+                        {formatSettingValue(setting.value)}
+                      </pre>
+                    </div>
+                    <Button type="button" variant="secondary" onClick={() => loadSettingIntoForm(setting)}>
+                      Edit
+                    </Button>
+                  </div>
                 </div>
               ))
             )}
@@ -3485,7 +3757,7 @@ function SuperAdminPortal({
           <StatCard label="Teachers" value={totalTeachers.toLocaleString()} />
         </div>
 
-        <Panel title="Provision a School" description="Calls the deployed `provision-school` edge function.">
+        <Panel title="Add a School" description="Create a new school, choose its plan, and invite its first admin.">
           <form className="grid gap-4 lg:grid-cols-2" onSubmit={submitSchool}>
             <Field label="School name">
               <Input
@@ -3551,7 +3823,7 @@ function SuperAdminPortal({
           </form>
         </Panel>
 
-        <Panel title="Schools" description="Live rows from `schools`, `school_subscriptions`, and usage stats.">
+        <Panel title="Schools" description="View each school's plan, size, and recent activity.">
           <div className="space-y-3">
             {data.stats.length === 0 ? (
               <EmptyState message="No schools found yet." />
@@ -3588,7 +3860,7 @@ function SuperAdminPortal({
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <Button variant="secondary" onClick={() => onOpenSchool(schoolRow)}>
-                          Open admin workspace
+                          Open school dashboard
                         </Button>
                         <Button variant="secondary" onClick={() => toggleSchool(schoolRow)}>
                           {school.is_active ? "Deactivate" : "Activate"}
@@ -3618,7 +3890,7 @@ function SuperAdminPortal({
           <StatCard label="Teachers" value={totalTeachers.toLocaleString()} />
         </div>
 
-        <Panel title="Provision a School" description="Calls the deployed `provision-school` edge function.">
+        <Panel title="Add a School" description="Create a new school, choose its plan, and invite its first admin.">
           <form className="grid gap-4 lg:grid-cols-2" onSubmit={submitSchool}>
             <Field label="School name">
               <Input
@@ -3684,7 +3956,7 @@ function SuperAdminPortal({
           </form>
         </Panel>
 
-        <Panel title="Schools" description="Live rows from `schools`, `school_subscriptions`, and usage stats.">
+        <Panel title="Schools" description="View each school's plan, size, and recent activity.">
           <div className="space-y-3">
             {data.stats.length === 0 ? (
               <EmptyState message="No schools found yet." />
@@ -3742,38 +4014,100 @@ function SuperAdminPortal({
   if (view === "settings") {
     return (
       <div className="space-y-6">
-        <Panel title="Platform Settings" description="Direct writes to `platform_settings` for super admins only.">
-          <form className="grid gap-4 lg:grid-cols-[240px_1fr_auto]" onSubmit={saveSetting}>
-            <Field label="Key">
+        <Panel title="System Settings" description="Manage shared names, contact details, reminders, and other platform-wide preferences.">
+          <form className="grid gap-4 lg:grid-cols-[220px_180px_1fr_auto]" onSubmit={saveSetting}>
+            <Field label="Setting name">
               <Input
                 value={settingForm.key}
                 onChange={(event) => setSettingForm((prev) => ({ ...prev, key: event.target.value }))}
                 required
               />
             </Field>
-            <Field label="JSON value">
-              <TextArea
-                rows={4}
-                value={settingForm.value}
-                onChange={(event) => setSettingForm((prev) => ({ ...prev, value: event.target.value }))}
-              />
+            <Field label="Type">
+              <Select
+                value={settingForm.valueType}
+                onChange={(event) =>
+                  setSettingForm((prev) => ({ ...prev, valueType: event.target.value as SettingValueType }))
+                }
+              >
+                <option value="text">Text</option>
+                <option value="number">Number</option>
+                <option value="boolean">Yes / No</option>
+                <option value="list">List</option>
+                <option value="pairs">Named values</option>
+              </Select>
+            </Field>
+            <Field
+              label={
+                settingForm.valueType === "list"
+                  ? "Items"
+                  : settingForm.valueType === "pairs"
+                    ? "Values"
+                    : "Value"
+              }
+            >
+              {settingForm.valueType === "boolean" ? (
+                <Select
+                  value={settingForm.booleanValue}
+                  onChange={(event) => setSettingForm((prev) => ({ ...prev, booleanValue: event.target.value as "true" | "false" }))}
+                >
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </Select>
+              ) : (
+                <TextArea
+                  rows={4}
+                  value={settingForm.valueInput}
+                  onChange={(event) => setSettingForm((prev) => ({ ...prev, valueInput: event.target.value }))}
+                  placeholder={
+                    settingForm.valueType === "list"
+                      ? "Item one\nItem two"
+                      : settingForm.valueType === "pairs"
+                        ? "Support email = help@school.com\nSchool day starts = 8:00 AM"
+                        : settingForm.valueType === "number"
+                          ? "25"
+                          : "Smart Class"
+                  }
+                />
+              )}
+              <p className="mt-1 text-xs text-muted-foreground">
+                {settingForm.valueType === "list"
+                  ? "Write one item per line."
+                  : settingForm.valueType === "pairs"
+                    ? "Write one name and value per line, like Support email = help@school.com."
+                    : settingForm.valueType === "boolean"
+                      ? "Choose whether this setting is on or off."
+                      : "Use a simple value only."}
+              </p>
             </Field>
             <div className="flex items-end">
-              <Button type="submit" disabled={busy}>
-                Save
-              </Button>
+              <div className="flex gap-2">
+                <Button type="submit" disabled={busy}>
+                  Save
+                </Button>
+                <Button type="button" variant="ghost" onClick={resetSettingForm}>
+                  Clear
+                </Button>
+              </div>
             </div>
           </form>
           <div className="mt-6 space-y-3">
             {data.settings.length === 0 ? (
-              <EmptyState message="No platform settings rows yet." />
+              <EmptyState message="No settings have been added yet." />
             ) : (
               data.settings.map((setting) => (
                 <div key={setting.key} className="rounded-2xl border border-border bg-muted/30 p-4">
-                  <p className="text-sm font-semibold">{setting.key}</p>
-                  <pre className="mt-2 overflow-x-auto text-xs text-muted-foreground">
-                    {JSON.stringify(setting.value, null, 2)}
-                  </pre>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold">{setting.key}</p>
+                      <pre className="mt-2 whitespace-pre-wrap text-xs text-muted-foreground">
+                        {formatSettingValue(setting.value)}
+                      </pre>
+                    </div>
+                    <Button type="button" variant="secondary" onClick={() => loadSettingIntoForm(setting)}>
+                      Edit
+                    </Button>
+                  </div>
                 </div>
               ))
             )}
@@ -3792,7 +4126,7 @@ function SuperAdminPortal({
         <StatCard label="Plans" value={data.plans.length} />
       </div>
       <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-        <Panel title="School Activity" description="Usage stats from `get_school_usage_stats()`.">
+        <Panel title="School Activity" description="See which schools are busy and how many students and teachers they serve.">
           <div className="space-y-3">
             {data.stats.slice(0, 8).map((row) => (
               <div key={row.school_id} className="flex items-center justify-between rounded-2xl bg-muted/30 p-4">
@@ -3807,7 +4141,7 @@ function SuperAdminPortal({
             ))}
           </div>
         </Panel>
-        <Panel title="Subscription Plans" description="Live rows from `subscription_plans`.">
+        <Panel title="Subscription Plans" description="Review the plans schools can use and what each one includes.">
           <div className="space-y-3">
             {data.plans.map((plan) => (
               <div key={plan.id} className="rounded-2xl bg-muted/30 p-4">
@@ -4184,7 +4518,7 @@ function SchoolAdminPortal({
   if (view === "academic") {
     return (
       <div className="space-y-6">
-        <Panel title="Working Days" description="Replaces the school’s `working_days` rows with the selected set.">
+        <Panel title="Working Days" description="Choose which days the school is open for classes.">
           <div className="grid gap-3 md:grid-cols-4">
             {[1, 2, 3, 4, 5, 6].map((day) => (
               <button
@@ -4356,7 +4690,7 @@ function SchoolAdminPortal({
   if (view === "teachers") {
     return (
       <div className="space-y-6">
-        <Panel title="Invite Teacher" description="Calls `invite-user`, then inserts `teacher_subject_assignments`.">
+        <Panel title="Invite Teacher" description="Invite a teacher and link them to a subject and class.">
           <form className="grid gap-4 lg:grid-cols-4" onSubmit={inviteTeacher}>
             <Field label="Full name">
               <Input value={teacherForm.full_name} onChange={(event) => setTeacherForm((prev) => ({ ...prev, full_name: event.target.value }))} required />
@@ -4403,7 +4737,7 @@ function SchoolAdminPortal({
   if (view === "students") {
     return (
       <div className="space-y-6">
-        <Panel title="Invite Student" description="Invites the student, enrolls them, and optionally links a parent.">
+        <Panel title="Invite Student" description="Invite a student, place them in a class, and optionally connect a parent.">
           <form className="grid gap-4 lg:grid-cols-4" onSubmit={inviteStudent}>
             <Field label="Student name">
               <Input value={studentForm.full_name} onChange={(event) => setStudentForm((prev) => ({ ...prev, full_name: event.target.value }))} required />
@@ -4472,7 +4806,7 @@ function SchoolAdminPortal({
   if (view === "timetable") {
     return (
       <div className="space-y-6">
-        <Panel title="Add Timetable Entry" description="Direct insert into `timetable_entries`.">
+        <Panel title="Add Timetable Entry" description="Build the weekly class schedule for your school.">
           <form className="grid gap-4 lg:grid-cols-3" onSubmit={createTimetable}>
             <Field label="Academic year">
               <Select value={timetableForm.academic_year_id} onChange={(event) => setTimetableForm((prev) => ({ ...prev, academic_year_id: event.target.value }))}>
@@ -4548,7 +4882,7 @@ function SchoolAdminPortal({
   if (view === "announcements") {
     return (
       <div className="space-y-6">
-        <Panel title="Publish Announcement" description="Inserts into `announcements`, creates one target row, then invokes `send-announcement`.">
+        <Panel title="Publish Announcement" description="Share an update with the whole school, a role, or a class.">
           <form className="grid gap-4 lg:grid-cols-2" onSubmit={publishAnnouncement}>
             <Field label="Title">
               <Input value={announcementForm.title} onChange={(event) => setAnnouncementForm((prev) => ({ ...prev, title: event.target.value }))} required />
@@ -4612,7 +4946,7 @@ function SchoolAdminPortal({
   if (view === "messages") {
     return (
       <div className="space-y-6">
-        <Panel title="Compose Message" description="Direct insert into `messages` and `message_recipients`.">
+        <Panel title="Compose Message" description="Send a private message to one person.">
           <form className="grid gap-4 lg:grid-cols-2" onSubmit={sendMessage}>
             <Field label="Recipient">
               <Select value={messageForm.recipient_id} onChange={(event) => setMessageForm((prev) => ({ ...prev, recipient_id: event.target.value }))}>
@@ -4704,11 +5038,10 @@ function SchoolAdminPortal({
           </div>
         </Panel>
       </div>
-      <Panel title="Settings Note">
+      <Panel title="School Settings">
         <p className="text-sm text-muted-foreground">
-          Your schema currently allows only super admins to update rows in `schools`, so I kept school-level settings
-          read-only in the live app for now. If you want school admins to edit `schools.settings`, we should add and
-          apply a follow-up migration that narrows their write access to the settings JSON instead of the full school row.
+          School-wide settings are view only right now. If you want school admins to edit them directly, we can unlock
+          that in the next update.
         </p>
       </Panel>
     </div>
@@ -4991,4 +5324,1320 @@ function TeacherPortal({
         body: messageForm.body,
       });
       setMessageForm({
-        recipient_id: data.recipientOptions[0]
+        recipient_id: data.recipientOptions[0]?.id ?? "",
+        subject: "",
+        body: "",
+      });
+    }, "Message sent.");
+  };
+
+  if (view === "lessons") {
+    return (
+      <div className="space-y-6">
+        <Panel title="Create Lesson" description="Add a new lesson for one of your classes.">
+          <form className="grid gap-4 lg:grid-cols-2" onSubmit={createLesson}>
+            <Field label="Lesson title">
+              <Input value={lessonForm.title} onChange={(event) => setLessonForm((prev) => ({ ...prev, title: event.target.value }))} required />
+            </Field>
+            <Field label="Lesson date">
+              <Input type="date" value={lessonForm.lesson_date} onChange={(event) => setLessonForm((prev) => ({ ...prev, lesson_date: event.target.value }))} required />
+            </Field>
+            <Field label="Class">
+              <Select value={lessonForm.class_id} onChange={(event) => setLessonForm((prev) => ({ ...prev, class_id: event.target.value }))}>
+                {data.classes.map((item) => (
+                  <option key={item.id} value={item.id}>{item.name}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Subject">
+              <Select value={lessonForm.subject_id} onChange={(event) => setLessonForm((prev) => ({ ...prev, subject_id: event.target.value }))}>
+                {data.subjects.map((subject) => (
+                  <option key={subject.id} value={subject.id}>{subject.name}</option>
+                ))}
+              </Select>
+            </Field>
+            <div className="lg:col-span-2">
+              <Field label="Description">
+                <TextArea rows={4} value={lessonForm.description} onChange={(event) => setLessonForm((prev) => ({ ...prev, description: event.target.value }))} />
+              </Field>
+            </div>
+            <div className="lg:col-span-2">
+              <Field label="Video URL">
+                <Input value={lessonForm.video_url} onChange={(event) => setLessonForm((prev) => ({ ...prev, video_url: event.target.value }))} />
+              </Field>
+            </div>
+            <div className="lg:col-span-2">
+              <Button type="submit" disabled={busy}>Create lesson</Button>
+            </div>
+          </form>
+        </Panel>
+        <Panel title="Lessons">
+          <div className="space-y-3">
+            {data.lessons.map((lesson) => (
+              <div key={lesson.id} className="rounded-2xl bg-muted/30 p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-semibold">{lesson.title}</p>
+                  <Badge>{classMap[lesson.class_id]?.name ?? "Class"}</Badge>
+                  <Badge>{subjectMap[lesson.subject_id]?.name ?? "Subject"}</Badge>
+                </div>
+                <p className="mt-2 text-sm text-muted-foreground">{lesson.description || "No description"}</p>
+                <p className="mt-2 text-xs text-muted-foreground">{formatDate(lesson.lesson_date)}</p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "homework") {
+    return (
+      <div className="space-y-6">
+        <Panel title="Create Homework" description="Pick a lesson and set homework for students.">
+          <form className="grid gap-4 lg:grid-cols-3" onSubmit={createHomework}>
+            <Field label="Homework title">
+              <Input value={homeworkForm.title} onChange={(event) => setHomeworkForm((prev) => ({ ...prev, title: event.target.value }))} required />
+            </Field>
+            <Field label="Lesson">
+              <Select value={homeworkForm.lesson_id} onChange={(event) => setHomeworkForm((prev) => ({ ...prev, lesson_id: event.target.value }))}>
+                {data.lessons.map((lesson) => (
+                  <option key={lesson.id} value={lesson.id}>{lesson.title}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Due date">
+              <Input type="datetime-local" value={homeworkForm.due_date} onChange={(event) => setHomeworkForm((prev) => ({ ...prev, due_date: event.target.value }))} required />
+            </Field>
+            <div className="lg:col-span-3">
+              <Button type="submit" disabled={busy}>Create homework</Button>
+            </div>
+          </form>
+        </Panel>
+        <Panel title="Add Multiple Choice Question" description="Add answer choices and mark the correct one.">
+          <form className="grid gap-4" onSubmit={addHomeworkQuestion}>
+            <Field label="Homework">
+              <Select value={homeworkQuestionForm.homework_id} onChange={(event) => setHomeworkQuestionForm((prev) => ({ ...prev, homework_id: event.target.value }))}>
+                {data.homework.map((item) => (
+                  <option key={item.item.id} value={item.item.id}>{item.item.title}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Question">
+              <TextArea rows={3} value={homeworkQuestionForm.question_text} onChange={(event) => setHomeworkQuestionForm((prev) => ({ ...prev, question_text: event.target.value }))} required />
+            </Field>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="Option A"><Input value={homeworkQuestionForm.opt_a} onChange={(event) => setHomeworkQuestionForm((prev) => ({ ...prev, opt_a: event.target.value }))} required /></Field>
+              <Field label="Option B"><Input value={homeworkQuestionForm.opt_b} onChange={(event) => setHomeworkQuestionForm((prev) => ({ ...prev, opt_b: event.target.value }))} required /></Field>
+              <Field label="Option C"><Input value={homeworkQuestionForm.opt_c} onChange={(event) => setHomeworkQuestionForm((prev) => ({ ...prev, opt_c: event.target.value }))} required /></Field>
+              <Field label="Option D"><Input value={homeworkQuestionForm.opt_d} onChange={(event) => setHomeworkQuestionForm((prev) => ({ ...prev, opt_d: event.target.value }))} required /></Field>
+            </div>
+            <Field label="Correct answer">
+              <Select value={homeworkQuestionForm.correct} onChange={(event) => setHomeworkQuestionForm((prev) => ({ ...prev, correct: event.target.value }))}>
+                <option value="a">Option A</option>
+                <option value="b">Option B</option>
+                <option value="c">Option C</option>
+                <option value="d">Option D</option>
+              </Select>
+            </Field>
+            <Button type="submit" disabled={busy}>Save question</Button>
+          </form>
+        </Panel>
+        <Panel title="Homework List">
+          <div className="space-y-3">
+            {data.homework.map((item) => (
+              <div key={item.item.id} className="rounded-2xl bg-muted/30 p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-semibold">{item.item.title}</p>
+                  <Badge>{item.lesson ? classMap[item.lesson.class_id]?.name ?? "Class" : "Lesson missing"}</Badge>
+                  <Badge>{item.questions.length} questions</Badge>
+                  <Badge>{item.submissions.length} submissions</Badge>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">Due {formatDateTime(item.item.due_date)}</p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "tests") {
+    return (
+      <div className="space-y-6">
+        <Panel title="Create Test">
+          <form className="grid gap-4 lg:grid-cols-3" onSubmit={createTest}>
+            <Field label="Test title">
+              <Input value={testForm.title} onChange={(event) => setTestForm((prev) => ({ ...prev, title: event.target.value }))} required />
+            </Field>
+            <Field label="Class">
+              <Select value={testForm.class_id} onChange={(event) => setTestForm((prev) => ({ ...prev, class_id: event.target.value }))}>
+                {data.classes.map((item) => (
+                  <option key={item.id} value={item.id}>{item.name}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Subject">
+              <Select value={testForm.subject_id} onChange={(event) => setTestForm((prev) => ({ ...prev, subject_id: event.target.value }))}>
+                {data.subjects.map((subject) => (
+                  <option key={subject.id} value={subject.id}>{subject.name}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Test date">
+              <Input type="date" value={testForm.test_date} onChange={(event) => setTestForm((prev) => ({ ...prev, test_date: event.target.value }))} required />
+            </Field>
+            <Field label="Duration">
+              <Input type="number" value={testForm.duration_minutes} onChange={(event) => setTestForm((prev) => ({ ...prev, duration_minutes: event.target.value }))} required />
+            </Field>
+            <Field label="Kind">
+              <Select value={testForm.kind} onChange={(event) => setTestForm((prev) => ({ ...prev, kind: event.target.value }))}>
+                <option value="monthly">Monthly</option>
+                <option value="final">Final</option>
+              </Select>
+            </Field>
+            <div className="lg:col-span-3">
+              <Button type="submit" disabled={busy}>Create test</Button>
+            </div>
+          </form>
+        </Panel>
+
+        <Panel title="Add Multiple Choice Question" description="Add answer choices and mark the correct one.">
+          <form className="grid gap-4" onSubmit={addTestQuestion}>
+            <Field label="Test">
+              <Select value={testQuestionForm.test_id} onChange={(event) => setTestQuestionForm((prev) => ({ ...prev, test_id: event.target.value }))}>
+                {data.tests.map((item) => (
+                  <option key={item.item.id} value={item.item.id}>{item.item.title}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Question">
+              <TextArea rows={3} value={testQuestionForm.question_text} onChange={(event) => setTestQuestionForm((prev) => ({ ...prev, question_text: event.target.value }))} required />
+            </Field>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="Option A"><Input value={testQuestionForm.opt_a} onChange={(event) => setTestQuestionForm((prev) => ({ ...prev, opt_a: event.target.value }))} required /></Field>
+              <Field label="Option B"><Input value={testQuestionForm.opt_b} onChange={(event) => setTestQuestionForm((prev) => ({ ...prev, opt_b: event.target.value }))} required /></Field>
+              <Field label="Option C"><Input value={testQuestionForm.opt_c} onChange={(event) => setTestQuestionForm((prev) => ({ ...prev, opt_c: event.target.value }))} required /></Field>
+              <Field label="Option D"><Input value={testQuestionForm.opt_d} onChange={(event) => setTestQuestionForm((prev) => ({ ...prev, opt_d: event.target.value }))} required /></Field>
+            </div>
+            <Field label="Correct answer">
+              <Select value={testQuestionForm.correct} onChange={(event) => setTestQuestionForm((prev) => ({ ...prev, correct: event.target.value }))}>
+                <option value="a">Option A</option>
+                <option value="b">Option B</option>
+                <option value="c">Option C</option>
+                <option value="d">Option D</option>
+              </Select>
+            </Field>
+            <Button type="submit" disabled={busy}>Save question</Button>
+          </form>
+        </Panel>
+
+        <Panel title="Tests">
+          <div className="space-y-3">
+            {data.tests.map((item) => (
+              <div key={item.item.id} className="rounded-2xl bg-muted/30 p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-semibold">{item.item.title}</p>
+                  <Badge>{classMap[item.item.class_id]?.name ?? "Class"}</Badge>
+                  <Badge>{subjectMap[item.item.subject_id]?.name ?? "Subject"}</Badge>
+                  <Badge>{item.questions.length} questions</Badge>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {formatDate(item.item.test_date)} · {item.item.duration_minutes} minutes · {item.submissions.length} submissions
+                </p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "students") {
+    return (
+      <div className="space-y-6">
+        <div className="grid gap-4 md:grid-cols-3">
+          <StatCard label="Assigned Students" value={data.students.length} />
+          <StatCard label="Homework Items" value={data.homework.length} />
+          <StatCard label="Tests" value={data.tests.length} />
+        </div>
+        <Panel title="Students in Assigned Classes">
+          <div className="space-y-3">
+            {data.students.map((student) => (
+              <div key={student.userId} className="rounded-2xl bg-muted/30 p-4">
+                <p className="font-semibold">{student.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {student.email} · {student.className}
+                </p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "timetable") {
+    return (
+      <Panel title="My Timetable">
+        <div className="space-y-3">
+          {data.timetable.length === 0 ? (
+            <EmptyState message="No timetable entries for this teacher yet." />
+          ) : (
+            data.timetable.map((entry) => (
+              <div key={entry.id} className="rounded-2xl bg-muted/30 p-4">
+                <p className="font-semibold">
+                  {classMap[entry.class_id]?.name ?? "Class"} · {subjectMap[entry.subject_id]?.name ?? "Subject"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {formatDate(entry.academic_year_id)}
+                </p>
+              </div>
+            ))
+          )}
+        </div>
+      </Panel>
+    );
+  }
+
+  if (view === "announcements") {
+    return (
+      <div className="space-y-6">
+        <Panel title="Publish Class Announcement" description="Share an update with one of the classes you teach.">
+          <form className="grid gap-4 lg:grid-cols-2" onSubmit={publishAnnouncement}>
+            <Field label="Class">
+              <Select value={announcementForm.class_id} onChange={(event) => setAnnouncementForm((prev) => ({ ...prev, class_id: event.target.value }))}>
+                {data.classes
+                  .filter((item) => data.assignments.some((assignment) => assignment.class_id === item.id))
+                  .map((item) => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+              </Select>
+            </Field>
+            <Field label="Title">
+              <Input value={announcementForm.title} onChange={(event) => setAnnouncementForm((prev) => ({ ...prev, title: event.target.value }))} required />
+            </Field>
+            <div className="lg:col-span-2">
+              <Field label="Body">
+                <TextArea rows={5} value={announcementForm.body} onChange={(event) => setAnnouncementForm((prev) => ({ ...prev, body: event.target.value }))} required />
+              </Field>
+            </div>
+            <div className="lg:col-span-2">
+              <Button type="submit" disabled={busy}>Publish class announcement</Button>
+            </div>
+          </form>
+        </Panel>
+        <Panel title="Announcements">
+          <div className="space-y-3">
+            {data.announcements.map((announcement) => (
+              <div key={announcement.item.id} className="rounded-2xl bg-muted/30 p-4">
+                <div className="flex items-center gap-2">
+                  <p className="font-semibold">{announcement.item.title}</p>
+                  <Badge>{announcement.audience}</Badge>
+                </div>
+                <p className="mt-2 text-sm">{announcement.item.body}</p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "messages") {
+    return (
+      <div className="space-y-6">
+        <Panel title="Compose Message">
+          <form className="grid gap-4 lg:grid-cols-2" onSubmit={sendMessage}>
+            <Field label="Recipient">
+              <Select value={messageForm.recipient_id} onChange={(event) => setMessageForm((prev) => ({ ...prev, recipient_id: event.target.value }))}>
+                {data.recipientOptions.map((recipient) => (
+                  <option key={recipient.id} value={recipient.id}>{recipient.label}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Subject">
+              <Input value={messageForm.subject} onChange={(event) => setMessageForm((prev) => ({ ...prev, subject: event.target.value }))} />
+            </Field>
+            <div className="lg:col-span-2">
+              <Field label="Message">
+                <TextArea rows={5} value={messageForm.body} onChange={(event) => setMessageForm((prev) => ({ ...prev, body: event.target.value }))} required />
+              </Field>
+            </div>
+            <div className="lg:col-span-2">
+              <Button type="submit" disabled={busy}>Send message</Button>
+            </div>
+          </form>
+        </Panel>
+        <Panel title="Messages">
+          <div className="space-y-3">
+            {data.messages.map((message) => (
+              <div key={message.item.id} className="rounded-2xl bg-muted/30 p-4">
+                <p className="font-semibold">{message.item.subject || "No subject"}</p>
+                <p className="mt-2 text-sm">{message.item.body}</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  From {message.senderName} · To {message.recipients.map((recipient) => recipient.label).join(", ")} · {formatDateTime(message.item.created_at)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Classes" value={unique(data.assignments.map((item) => item.class_id).filter(Boolean)).length} />
+        <StatCard label="Lessons" value={data.lessons.length} />
+        <StatCard label="Homework" value={data.homework.length} />
+        <StatCard label="Tests" value={data.tests.length} />
+      </div>
+      <Panel title="Recent Work">
+        <div className="space-y-3">
+          {data.lessons.slice(0, 5).map((lesson) => (
+            <div key={lesson.id} className="rounded-2xl bg-muted/30 p-4">
+              <p className="font-semibold">{lesson.title}</p>
+              <p className="text-xs text-muted-foreground">
+                {classMap[lesson.class_id]?.name ?? "Class"} · {subjectMap[lesson.subject_id]?.name ?? "Subject"} · {formatDate(lesson.lesson_date)}
+              </p>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function StudentPortal({
+  view,
+  data,
+  profile,
+  onNotify,
+  onRefresh,
+}: {
+  view: string;
+  data: StudentData;
+  profile: BasicProfile;
+  onNotify: (kind: "success" | "error" | "info", message: string) => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [activeHomeworkId, setActiveHomeworkId] = useState<string | null>(null);
+  const [activeTestId, setActiveTestId] = useState<string | null>(null);
+  const [homeworkSelections, setHomeworkSelections] = useState<Record<string, string>>({});
+  const [testSelections, setTestSelections] = useState<Record<string, string>>({});
+  const [messageForm, setMessageForm] = useState({
+    recipient_id: data.recipientOptions[0]?.id ?? "",
+    subject: "",
+    body: "",
+  });
+
+  const classMap = byId(data.classes);
+  const subjectMap = byId(data.subjects);
+  const enrollment = data.enrollments[0];
+
+  const runAction = async (work: () => Promise<void>, successMessage: string) => {
+    try {
+      setBusy(true);
+      await work();
+      onNotify("success", successMessage);
+      await onRefresh();
+    } catch (error) {
+      onNotify("error", error instanceof Error ? error.message : "Action failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitHomework = (bundle: HomeworkBundle) => {
+    void runAction(async () => {
+      const existing = bundle.submissions.find((submission) => submission.student_id === profile.id);
+      if (existing) {
+        throw new Error("This homework is already submitted.");
+      }
+      const missing = bundle.questions.find((question) => !homeworkSelections[question.id]);
+      if (missing) {
+        throw new Error("Answer every question before submitting.");
+      }
+
+      const submission = unwrap(
+        await supabase
+          .from("homework_submissions")
+          .insert({
+            homework_id: bundle.item.id,
+            student_id: profile.id,
+          })
+          .select("id,homework_id,student_id,submitted_at,score,graded_at")
+          .single(),
+      ) as unknown as HomeworkSubmission;
+
+      unwrap(
+        await supabase.from("homework_answers").insert(
+          bundle.questions.map((question) => ({
+            submission_id: submission.id,
+            question_id: question.id,
+            selected_choice_id: homeworkSelections[question.id],
+          })),
+        ),
+      );
+      setActiveHomeworkId(null);
+      setHomeworkSelections({});
+    }, "Homework submitted.");
+  };
+
+  const submitTest = (bundle: TestBundle) => {
+    void runAction(async () => {
+      const existing = bundle.submissions.find((submission) => submission.student_id === profile.id);
+      if (existing) {
+        throw new Error("This test is already submitted.");
+      }
+      const missing = bundle.questions.find((question) => !testSelections[question.id]);
+      if (missing) {
+        throw new Error("Answer every question before submitting.");
+      }
+
+      const submission = unwrap(
+        await supabase
+          .from("test_submissions")
+          .insert({
+            test_id: bundle.item.id,
+            student_id: profile.id,
+          })
+          .select("id,test_id,student_id,submitted_at,score,graded_at")
+          .single(),
+      ) as unknown as TestSubmission;
+
+      unwrap(
+        await supabase.from("test_answers").insert(
+          bundle.questions.map((question) => ({
+            submission_id: submission.id,
+            question_id: question.id,
+            selected_choice_id: testSelections[question.id],
+          })),
+        ),
+      );
+      setActiveTestId(null);
+      setTestSelections({});
+    }, "Test submitted.");
+  };
+
+  const sendMessage = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      await sendMessageToRecipient({
+        schoolId: data.school.id,
+        senderId: profile.id,
+        recipientId: messageForm.recipient_id,
+        subject: messageForm.subject,
+        body: messageForm.body,
+      });
+      setMessageForm({
+        recipient_id: data.recipientOptions[0]?.id ?? "",
+        subject: "",
+        body: "",
+      });
+    }, "Message sent.");
+  };
+
+  if (view === "lessons") {
+    return (
+      <Panel title="Lessons">
+        <div className="space-y-3">
+          {data.lessons.map((lesson) => (
+            <div key={lesson.id} className="rounded-2xl bg-muted/30 p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-semibold">{lesson.title}</p>
+                <Badge>{classMap[lesson.class_id]?.name ?? "Class"}</Badge>
+                <Badge>{subjectMap[lesson.subject_id]?.name ?? "Subject"}</Badge>
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">{lesson.description || "No description"}</p>
+              <p className="mt-2 text-xs text-muted-foreground">{formatDate(lesson.lesson_date)}</p>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    );
+  }
+
+  if (view === "homework") {
+    const active = data.homework.find((item) => item.item.id === activeHomeworkId) ?? null;
+    return (
+      <div className="space-y-6">
+        {active ? (
+          <Panel title={active.item.title} description="Submit your answers once and your score will be updated automatically.">
+            <div className="space-y-5">
+              {active.questions.map((question, index) => (
+                <div key={question.id} className="rounded-2xl bg-muted/30 p-4">
+                  <p className="font-semibold">Question {index + 1}</p>
+                  <p className="mt-2 text-sm">{question.question_text}</p>
+                  <div className="mt-4 space-y-2">
+                    {question.choices.map((choice) => (
+                      <label key={choice.id} className="flex items-center gap-3 rounded-xl border border-border bg-card px-3 py-2 text-sm">
+                        <input
+                          type="radio"
+                          name={question.id}
+                          checked={homeworkSelections[question.id] === choice.id}
+                          onChange={() => setHomeworkSelections((prev) => ({ ...prev, [question.id]: choice.id }))}
+                        />
+                        {choice.choice_text}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              <div className="flex flex-wrap gap-3">
+                <Button variant="secondary" onClick={() => setActiveHomeworkId(null)}>
+                  Back
+                </Button>
+                <Button onClick={() => submitHomework(active)} disabled={busy}>
+                  Submit homework
+                </Button>
+              </div>
+            </div>
+          </Panel>
+        ) : (
+          <Panel title="Homework">
+            <div className="space-y-3">
+              {data.homework.map((item) => {
+                const submission = item.submissions.find((row) => row.student_id === profile.id);
+                return (
+                  <div key={item.item.id} className="rounded-2xl bg-muted/30 p-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <p className="font-semibold">{item.item.title}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Due {formatDateTime(item.item.due_date)} · {item.questions.length} questions
+                        </p>
+                      </div>
+                      {submission ? (
+                        <Badge tone="success">Score: {submission.score ?? "Pending"}</Badge>
+                      ) : (
+                        <Button onClick={() => setActiveHomeworkId(item.item.id)}>Open</Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Panel>
+        )}
+      </div>
+    );
+  }
+
+  if (view === "tests") {
+    const active = data.tests.find((item) => item.item.id === activeTestId) ?? null;
+    return (
+      <div className="space-y-6">
+        {active ? (
+          <Panel title={active.item.title} description="Submit your answers once and your attempt will be saved automatically.">
+            <div className="space-y-5">
+              {active.questions.map((question, index) => (
+                <div key={question.id} className="rounded-2xl bg-muted/30 p-4">
+                  <p className="font-semibold">Question {index + 1}</p>
+                  <p className="mt-2 text-sm">{question.question_text}</p>
+                  <div className="mt-4 space-y-2">
+                    {question.choices.map((choice) => (
+                      <label key={choice.id} className="flex items-center gap-3 rounded-xl border border-border bg-card px-3 py-2 text-sm">
+                        <input
+                          type="radio"
+                          name={question.id}
+                          checked={testSelections[question.id] === choice.id}
+                          onChange={() => setTestSelections((prev) => ({ ...prev, [question.id]: choice.id }))}
+                        />
+                        {choice.choice_text}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              <div className="flex flex-wrap gap-3">
+                <Button variant="secondary" onClick={() => setActiveTestId(null)}>
+                  Back
+                </Button>
+                <Button onClick={() => submitTest(active)} disabled={busy}>
+                  Submit test
+                </Button>
+              </div>
+            </div>
+          </Panel>
+        ) : (
+          <Panel title="Tests">
+            <div className="space-y-3">
+              {data.tests.map((item) => {
+                const submission = item.submissions.find((row) => row.student_id === profile.id);
+                return (
+                  <div key={item.item.id} className="rounded-2xl bg-muted/30 p-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <p className="font-semibold">{item.item.title}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDate(item.item.test_date)} · {item.item.duration_minutes} minutes · {item.questions.length} questions
+                        </p>
+                      </div>
+                      {submission ? (
+                        <Badge tone="success">Score: {submission.score ?? "Pending"}</Badge>
+                      ) : (
+                        <Button onClick={() => setActiveTestId(item.item.id)}>Open</Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Panel>
+        )}
+      </div>
+    );
+  }
+
+  if (view === "grades") {
+    return (
+      <Panel title="Final Grades">
+        <div className="space-y-3">
+          {data.grades.map((grade) => (
+            <div key={grade.id} className="rounded-2xl bg-muted/30 p-4">
+              <div className="flex items-center gap-2">
+                <p className="font-semibold">{subjectMap[grade.subject_id]?.name ?? "Subject"}</p>
+                <Badge>{grade.status}</Badge>
+              </div>
+              <p className="mt-2 text-sm">
+                {grade.grade_letter ?? "—"} · {grade.grade_value ?? "—"}
+              </p>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    );
+  }
+
+  if (view === "attendance") {
+    return (
+      <Panel title="Attendance">
+        <div className="space-y-3">
+          {data.attendance.map((row) => (
+            <div key={row.id} className="rounded-2xl bg-muted/30 p-4">
+              <div className="flex items-center gap-2">
+                <p className="font-semibold">{row.status}</p>
+                <Badge>{formatDateTime(row.recorded_at)}</Badge>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    );
+  }
+
+  if (view === "timetable") {
+    return (
+      <Panel title="Timetable">
+        <div className="space-y-3">
+          {data.timetable.map((entry) => (
+            <div key={entry.id} className="rounded-2xl bg-muted/30 p-4">
+              <p className="font-semibold">
+                {classMap[entry.class_id]?.name ?? "Class"} · {subjectMap[entry.subject_id]?.name ?? "Subject"}
+              </p>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    );
+  }
+
+  if (view === "announcements") {
+    return (
+      <Panel title="Announcements">
+        <div className="space-y-3">
+          {data.announcements.map((announcement) => (
+            <div key={announcement.item.id} className="rounded-2xl bg-muted/30 p-4">
+              <div className="flex items-center gap-2">
+                <p className="font-semibold">{announcement.item.title}</p>
+                <Badge>{announcement.audience}</Badge>
+              </div>
+              <p className="mt-2 text-sm">{announcement.item.body}</p>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    );
+  }
+
+  if (view === "messages") {
+    return (
+      <div className="space-y-6">
+        <Panel title="Compose Message">
+          <form className="grid gap-4 lg:grid-cols-2" onSubmit={sendMessage}>
+            <Field label="Teacher">
+              <Select value={messageForm.recipient_id} onChange={(event) => setMessageForm((prev) => ({ ...prev, recipient_id: event.target.value }))}>
+                {data.recipientOptions.map((recipient) => (
+                  <option key={recipient.id} value={recipient.id}>{recipient.label}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Subject">
+              <Input value={messageForm.subject} onChange={(event) => setMessageForm((prev) => ({ ...prev, subject: event.target.value }))} />
+            </Field>
+            <div className="lg:col-span-2">
+              <Field label="Message">
+                <TextArea rows={5} value={messageForm.body} onChange={(event) => setMessageForm((prev) => ({ ...prev, body: event.target.value }))} required />
+              </Field>
+            </div>
+            <div className="lg:col-span-2">
+              <Button type="submit" disabled={busy}>Send message</Button>
+            </div>
+          </form>
+        </Panel>
+        <Panel title="Messages">
+          <div className="space-y-3">
+            {data.messages.map((message) => (
+              <div key={message.item.id} className="rounded-2xl bg-muted/30 p-4">
+                <p className="font-semibold">{message.item.subject || "No subject"}</p>
+                <p className="mt-2 text-sm">{message.item.body}</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  From {message.senderName} · {formatDateTime(message.item.created_at)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Current Class" value={enrollment ? classMap[enrollment.class_id]?.name ?? "Unknown" : "None"} />
+        <StatCard label="Homework" value={data.homework.length} />
+        <StatCard label="Tests" value={data.tests.length} />
+        <StatCard label="Notifications" value={data.notifications.length} />
+      </div>
+      <Panel title="Recent Notifications">
+        <div className="space-y-3">
+          {data.notifications.length === 0 ? (
+            <EmptyState message="No notifications yet." />
+          ) : (
+            data.notifications.map((notification) => (
+              <div key={notification.id} className="rounded-2xl bg-muted/30 p-4">
+                <p className="font-semibold">{notification.title || "Notification"}</p>
+                <p className="mt-1 text-sm text-muted-foreground">{notification.body || "No content"}</p>
+                <p className="mt-2 text-xs text-muted-foreground">{formatDateTime(notification.created_at)}</p>
+              </div>
+            ))
+          )}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function ParentPortal({
+  view,
+  data,
+  profile,
+  onNotify,
+  onRefresh,
+}: {
+  view: string;
+  data: ParentData;
+  profile: BasicProfile;
+  onNotify: (kind: "success" | "error" | "info", message: string) => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [selectedChildId, setSelectedChildId] = useState(data.children[0]?.userId ?? "");
+  const [messageForm, setMessageForm] = useState({
+    recipient_id: data.recipientOptions[0]?.id ?? "",
+    subject: "",
+    body: "",
+  });
+
+  const classMap = byId(data.classes);
+  const subjectMap = byId(data.subjects);
+  const selectedChild = data.children.find((child) => child.userId === selectedChildId) ?? data.children[0] ?? null;
+  const selectedEnrollment = data.enrollments.find((row) => row.student_id === selectedChildId);
+  const childHomework = data.homework.map((item) => ({
+    ...item,
+    submission: item.submissions.find((submission) => submission.student_id === selectedChildId),
+  }));
+  const childTests = data.tests.map((item) => ({
+    ...item,
+    submission: item.submissions.find((submission) => submission.student_id === selectedChildId),
+  }));
+  const childGrades = data.grades.filter((grade) => grade.student_id === selectedChildId);
+  const childAttendance = data.attendance.filter((row) => row.student_id === selectedChildId);
+
+  const runAction = async (work: () => Promise<void>, successMessage: string) => {
+    try {
+      setBusy(true);
+      await work();
+      onNotify("success", successMessage);
+      await onRefresh();
+    } catch (error) {
+      onNotify("error", error instanceof Error ? error.message : "Action failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendMessage = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      await sendMessageToRecipient({
+        schoolId: data.school.id,
+        senderId: profile.id,
+        recipientId: messageForm.recipient_id,
+        subject: messageForm.subject,
+        body: messageForm.body,
+      });
+      setMessageForm({
+        recipient_id: data.recipientOptions[0]?.id ?? "",
+        subject: "",
+        body: "",
+      });
+    }, "Message sent.");
+  };
+
+  if (view === "children") {
+    return (
+      <Panel title="Children">
+        <div className="space-y-3">
+          {data.children.map((child) => (
+            <div key={child.userId} className="rounded-2xl bg-muted/30 p-4">
+              <p className="font-semibold">{child.name}</p>
+              <p className="text-xs text-muted-foreground">{child.className}</p>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    );
+  }
+
+  if (view === "homework") {
+    return (
+      <Panel title={`Homework${selectedChild ? ` · ${selectedChild.name}` : ""}`}>
+        <div className="space-y-3">
+          {childHomework.map((item) => (
+            <div key={item.item.id} className="rounded-2xl bg-muted/30 p-4">
+              <p className="font-semibold">{item.item.title}</p>
+              <p className="text-xs text-muted-foreground">Due {formatDateTime(item.item.due_date)}</p>
+              <p className="mt-2 text-sm">Score: {item.submission?.score ?? "Not submitted yet"}</p>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    );
+  }
+
+  if (view === "tests") {
+    return (
+      <Panel title={`Tests${selectedChild ? ` · ${selectedChild.name}` : ""}`}>
+        <div className="space-y-3">
+          {childTests.map((item) => (
+            <div key={item.item.id} className="rounded-2xl bg-muted/30 p-4">
+              <p className="font-semibold">{item.item.title}</p>
+              <p className="text-xs text-muted-foreground">{formatDate(item.item.test_date)}</p>
+              <p className="mt-2 text-sm">Score: {item.submission?.score ?? "Not submitted yet"}</p>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    );
+  }
+
+  if (view === "grades") {
+    return (
+      <Panel title={`Grades${selectedChild ? ` · ${selectedChild.name}` : ""}`}>
+        <div className="space-y-3">
+          {childGrades.map((grade) => (
+            <div key={grade.id} className="rounded-2xl bg-muted/30 p-4">
+              <p className="font-semibold">{subjectMap[grade.subject_id]?.name ?? "Subject"}</p>
+              <p className="mt-2 text-sm">
+                {grade.grade_letter ?? "—"} · {grade.grade_value ?? "—"}
+              </p>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    );
+  }
+
+  if (view === "attendance") {
+    return (
+      <Panel title={`Attendance${selectedChild ? ` · ${selectedChild.name}` : ""}`}>
+        <div className="space-y-3">
+          {childAttendance.map((row) => (
+            <div key={row.id} className="rounded-2xl bg-muted/30 p-4">
+              <p className="font-semibold">{row.status}</p>
+              <p className="text-xs text-muted-foreground">{formatDateTime(row.recorded_at)}</p>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    );
+  }
+
+  if (view === "timetable") {
+    return (
+      <Panel title={`Timetable${selectedChild ? ` · ${selectedChild.name}` : ""}`}>
+        <div className="space-y-3">
+          {data.timetable
+            .filter((entry) => !selectedEnrollment || entry.class_id === selectedEnrollment.class_id)
+            .map((entry) => (
+              <div key={entry.id} className="rounded-2xl bg-muted/30 p-4">
+                <p className="font-semibold">
+                  {classMap[entry.class_id]?.name ?? "Class"} · {subjectMap[entry.subject_id]?.name ?? "Subject"}
+                </p>
+              </div>
+            ))}
+        </div>
+      </Panel>
+    );
+  }
+
+  if (view === "announcements") {
+    return (
+      <Panel title="Announcements">
+        <div className="space-y-3">
+          {data.announcements.map((announcement) => (
+            <div key={announcement.item.id} className="rounded-2xl bg-muted/30 p-4">
+              <div className="flex items-center gap-2">
+                <p className="font-semibold">{announcement.item.title}</p>
+                <Badge>{announcement.audience}</Badge>
+              </div>
+              <p className="mt-2 text-sm">{announcement.item.body}</p>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    );
+  }
+
+  if (view === "messages") {
+    return (
+      <div className="space-y-6">
+        <Panel title="Compose Message">
+          <form className="grid gap-4 lg:grid-cols-2" onSubmit={sendMessage}>
+            <Field label="Teacher">
+              <Select value={messageForm.recipient_id} onChange={(event) => setMessageForm((prev) => ({ ...prev, recipient_id: event.target.value }))}>
+                {data.recipientOptions.map((recipient) => (
+                  <option key={recipient.id} value={recipient.id}>{recipient.label}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Subject">
+              <Input value={messageForm.subject} onChange={(event) => setMessageForm((prev) => ({ ...prev, subject: event.target.value }))} />
+            </Field>
+            <div className="lg:col-span-2">
+              <Field label="Message">
+                <TextArea rows={5} value={messageForm.body} onChange={(event) => setMessageForm((prev) => ({ ...prev, body: event.target.value }))} required />
+              </Field>
+            </div>
+            <div className="lg:col-span-2">
+              <Button type="submit" disabled={busy}>Send message</Button>
+            </div>
+          </form>
+        </Panel>
+        <Panel title="Messages">
+          <div className="space-y-3">
+            {data.messages.map((message) => (
+              <div key={message.item.id} className="rounded-2xl bg-muted/30 p-4">
+                <p className="font-semibold">{message.item.subject || "No subject"}</p>
+                <p className="mt-2 text-sm">{message.item.body}</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  From {message.senderName} · {formatDateTime(message.item.created_at)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <Field label="Child">
+          <Select value={selectedChildId} onChange={(event) => setSelectedChildId(event.target.value)}>
+            {data.children.map((child) => (
+              <option key={child.userId} value={child.userId}>{child.name}</option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Child" value={selectedChild?.name ?? "None"} />
+        <StatCard label="Class" value={selectedChild?.className ?? "None"} />
+        <StatCard label="Homework" value={childHomework.length} />
+        <StatCard label="Attendance" value={childAttendance.length} />
+      </div>
+      <Panel title="Current Snapshot">
+        <div className="space-y-3 text-sm">
+          <p><span className="font-semibold">School:</span> {data.school.name}</p>
+          <p><span className="font-semibold">Child:</span> {selectedChild?.name ?? "None selected"}</p>
+          <p><span className="font-semibold">Class:</span> {selectedChild?.className ?? "Unknown"}</p>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+export default function SmartClassLiveApp() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [bootLoading, setBootLoading] = useState(true);
+  const [membershipLoading, setMembershipLoading] = useState(false);
+  const [bootstrapLoading, setBootstrapLoading] = useState(false);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [profile, setProfile] = useState<BasicProfile | null>(null);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [workspaceKey, setWorkspaceKey] = useState<string | null>(null);
+  const [workspaceOverride, setWorkspaceOverride] = useState<Workspace | null>(null);
+  const [data, setData] = useState<LoadedWorkspaceData | null>(null);
+  const [view, setView] = useState("dashboard");
+  const [flash, setFlash] = useState<FlashState>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const refreshMemberships = async (targetUser: Session["user"]) => {
+    setMembershipLoading(true);
+    try {
+      const result = await loadMemberships(targetUser);
+      setProfile(result.profile);
+      setWorkspaces(result.workspaces);
+      setWorkspaceOverride(null);
+      const stored = window.localStorage.getItem(`smart-class.workspace.${targetUser.id}`);
+      const nextWorkspace = result.workspaces.find((item) => item.key === stored) ?? result.workspaces[0] ?? null;
+      setWorkspaceKey(nextWorkspace?.key ?? null);
+      setView("dashboard");
+      setError(result.workspaces.length === 0 ? "This account does not have access to any school or admin area yet." : null);
+    } catch (membershipError) {
+      setError(membershipError instanceof Error ? membershipError.message : "Failed to load your access.");
+    } finally {
+      setMembershipLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!flash) return;
+    const timeout = window.setTimeout(() => setFlash(null), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [flash]);
+
+  useEffect(() => {
+    if (!hasSupabaseEnv) {
+      setBootLoading(false);
+      return;
+    }
+
+    let mounted = true;
+    supabase.auth.getSession().then(({ data: sessionData, error: sessionError }) => {
+      if (!mounted) return;
+      if (sessionError) {
+        setError(sessionError.message);
+      }
+      setSession(sessionData.session ?? null);
+      setBootLoading(false);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!session?.user) {
+      setProfile(null);
+      setWorkspaces([]);
+      setWorkspaceKey(null);
+      setWorkspaceOverride(null);
+      setData(null);
+      return;
+    }
+
+    void refreshMemberships(session.user);
+  }, [session?.user]);
+
+  const selectedWorkspace = workspaceOverride ?? workspaces.find((item) => item.key === workspaceKey) ?? null;
+
+  const refreshWorkspaceData = async () => {
+    if (!selectedWorkspace || !session?.user) return;
+    setDataLoading(true);
+    setError(null);
+    try {
+      const nextData = await loadWorkspaceData(selectedWorkspace, session.user.id);
+      setData(nextData);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load workspace data.");
+    } finally {
+      setDataLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedWorkspace || !session?.user) {
+      setData(null);
+      return;
+    }
+    if (!workspaceOverride) {
+      window.localStorage.setItem(`smart-class.workspace.${session.user.id}`, selectedWorkspace.key);
+    }
+    setView("dashboard");
+    void refreshWorkspaceData();
+  }, [selectedWorkspace?.key, session?.user?.id, workspaceOverride]);
+
+  const notify = (kind: "success" | "error" | "info", message: string) => {
+    setFlash({ kind, message });
+  };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    setData(null);
+    setWorkspaces([]);
+    setWorkspaceKey(null);
+    setWorkspaceOverride(null);
+  };
+
+  const bootstrapInitialSuperAdmin = async () => {
+    if (!session?.user || !profile) return;
+    setBootstrapLoading(true);
+    try {
+      await bootstrapSuperAdminRole(profile.first_name, profile.last_name);
+      notify("success", "Initial super admin role created.");
+      await refreshMemberships(session.user);
+    } catch (bootstrapError) {
+      notify(
+        "error",
+        bootstrapError instanceof Error
+          ? bootstrapError.message
+          : "Failed to bootstrap the first super admin.",
+      );
+    } finally {
+      setBootstrapLoading(false);
+    }
+  };
+
+  if (!hasSupabaseEnv) {
+    return <ConfigScreen />;
+  }
+
+  if (bootLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="rounded-2xl border border-border bg-card px-6 py-5 text-sm text-muted-foreground shadow-sm">
+          Connecting to Smart Class...
+        </div>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <AuthScreen loading={membershipLoading || dataLoading} onNotify={notify} />;
+  }
+
+  if (membershipLoading || !profile) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="rounded-2xl border border-border bg-card px-6 py-5 text-sm text-muted-foreground shadow-sm">
+          Loading your access...
+        </div>
+      </div>
+    );
+  }
+
+  if (workspaces.length > 1 && !selectedWorkspace) {
+    return <WorkspacePicker workspaces={workspaces} onPick={(workspace) => setWorkspaceKey(workspace.key)} onSignOut={() => void signOut()} profile={profile} />;
+  }
+
+  if (!selectedWorkspace) {
+    return (
+      <>
+        <NoWorkspaceScreen
+          error={error}
+          profile={profile}
+          busy={membershipLoading || bootstrapLoading}
+          onBootstrap={() => void bootstrapInitialSuperAdmin()}
+          onRefresh={() => void refreshMemberships(session.user)}
+          onSignOut={() => void signOut()}
+        />
+        <div className="fixed left-4 right-4 top-4 z-50 mx-auto max-w-3xl">
+          <Flash flash={flash} />
+        </div>
+      </>
+    );
+  }
+
+  const navItems = NAV_BY_ROLE[selectedWorkspace.role];
+
+  return (
+    <WorkspaceShell
+      navItems={navItems}
+      activeView={view}
+      onSelect={setView}
+      onRefresh={() => void refreshWorkspaceData()}
+      onSignOut={() => void signOut()}
+      onSwitchWorkspace={() => {
+        if (workspaceOverride) {
+          setWorkspaceOverride(null);
+          return;
+        }
+        if (workspaces.length > 1) {
+          setWorkspaceKey(null);
+        }
+      }}
+      workspace={selectedWorkspace}
+      profile={profile}
+      loading={dataLoading}
+    >
+      <div className="space-y-6">
+        <Flash flash={flash} />
+        {error ? (
+          <Panel title="Could Not Load Page">
+            <p className="text-sm text-muted-foreground">{error}</p>
+          </Panel>
+        ) : null}
+        {dataLoading && !data ? (
+          <Panel title="Loading">
+            <p className="text-sm text-muted-foreground">Loading the latest information for this dashboard...</p>
+          </Panel>
+        ) : null}
+        {data?.role === "super_admin" ? (
+          <SuperAdminPortal
+            view={view}
+            data={data}
+            onNotify={notify}
+            onRefresh={refreshWorkspaceData}
+            onOpenSchool={(school) =>
+              setWorkspaceOverride({
+                key: `override-school-admin-${school.id}`,
+                role: "school_admin",
+                schoolId: school.id,
+                schoolName: school.name,
+                school,
+              })
+            }
+          />
+        ) : null}
+        {data?.role === "school_admin" ? (
+          <SchoolAdminPortal view={view} data={data} profile={profile} onNotify={notify} onRefresh={refreshWorkspaceData} />
+        ) : null}
+        {data?.role === "teacher" ? (
+          <TeacherPortal view={view} data={data} profile={profile} onNotify={notify} onRefresh={refreshWorkspaceData} />
+        ) : null}
+        {data?.role === "student" ? (
+          <StudentPortal view={view} data={data} profile={profile} onNotify={notify} onRefresh={refreshWorkspaceData} />
+        ) : null}
+        {data?.role === "parent" ? (
+          <ParentPortal view={view} data={data} profile={profile} onNotify={notify} onRefresh={refreshWorkspaceData} />
+        ) : null}
+      </div>
+    </WorkspaceShell>
+  );
+}

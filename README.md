@@ -33,6 +33,7 @@
   The live app is wired to the deployed schema/functions for:
 
   - school provisioning
+  - initial super-admin bootstrap for fresh projects
   - teacher/student/parent invites
   - academic structure setup
   - timetable entries
@@ -40,4 +41,8 @@
   - lessons, homework, tests, and MCQ submissions
   - grades, attendance, and messages
   - CSV export through the `export-data` edge function
+
+  If this is a brand-new project with no admin yet, also deploy:
+
+  - `supabase/functions/bootstrap-super-admin`
   
