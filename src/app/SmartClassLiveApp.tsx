@@ -1176,10 +1176,54 @@ async function loadSuperAdminData() {
   const profileRows = (unwrap(profiles) as unknown) as PlatformProfile[];
   const roleRowsData = (unwrap(roleRows) as unknown) as RoleRow[];
   const auditRows = (unwrap(auditLogs) as unknown) as AuditLogRecord[];
+  const statsBySchoolId = statsRows.reduce<Record<string, SchoolUsageStat>>((acc, row) => {
+    acc[row.school_id] = row;
+    return acc;
+  }, {});
+  const latestSubscriptionsBySchool = subscriptionRows.reduce<Record<string, SchoolSubscription>>((acc, row) => {
+    if (!acc[row.school_id]) {
+      acc[row.school_id] = row;
+    }
+    return acc;
+  }, {});
+  const roleCountsBySchool = roleRowsData.reduce<Record<string, { student_count: number; teacher_count: number; parent_count: number }>>(
+    (acc, row) => {
+      if (!row.school_id || !row.is_active) return acc;
+      if (!acc[row.school_id]) {
+        acc[row.school_id] = { student_count: 0, teacher_count: 0, parent_count: 0 };
+      }
+      if (row.role === "student") acc[row.school_id].student_count += 1;
+      if (row.role === "teacher") acc[row.school_id].teacher_count += 1;
+      if (row.role === "parent") acc[row.school_id].parent_count += 1;
+      return acc;
+    },
+    {},
+  );
+  const hydratedStatsRows = schoolRows.map<SchoolUsageStat>((school) => {
+    const stat = statsBySchoolId[school.id];
+    const subscription = latestSubscriptionsBySchool[school.id];
+    const roleCounts = roleCountsBySchool[school.id] ?? {
+      student_count: 0,
+      teacher_count: 0,
+      parent_count: 0,
+    };
+
+    return {
+      school_id: school.id,
+      school_name: school.name,
+      is_active: school.is_active,
+      student_count: stat?.student_count ?? roleCounts.student_count,
+      teacher_count: stat?.teacher_count ?? roleCounts.teacher_count,
+      parent_count: stat?.parent_count ?? roleCounts.parent_count,
+      class_count: stat?.class_count ?? 0,
+      subscription_status: stat?.subscription_status ?? subscription?.status ?? null,
+      last_activity_at: stat?.last_activity_at ?? school.created_at ?? null,
+    };
+  });
 
   return {
     role: "super_admin",
-    stats: statsRows,
+    stats: hydratedStatsRows,
     schools: schoolRows,
     plans: planRows,
     subscriptions: subscriptionRows,
@@ -2268,11 +2312,31 @@ function WorkspaceShell({
   loading: boolean;
   children: ReactNode;
 }) {
+  const useFloatingSidebar = workspace.role === "school_admin";
+
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(17,24,39,0.06),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.08),_transparent_26%)] text-foreground md:h-screen md:overflow-hidden">
-      <div className="mx-auto flex min-h-screen max-w-[1600px] md:h-full md:px-4 md:py-4">
-        <aside className="hidden w-80 shrink-0 md:flex md:pr-4">
-          <div className="sticky top-4 flex h-[calc(100vh-2rem)] w-full flex-col rounded-[2rem] border border-border/70 bg-card/92 px-5 py-6 shadow-[0_24px_70px_rgba(15,23,42,0.12)] backdrop-blur">
+    <div
+      className={`min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(17,24,39,0.06),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.08),_transparent_26%)] text-foreground ${
+        useFloatingSidebar ? "" : "md:h-screen md:overflow-hidden"
+      }`}
+    >
+      <div
+        className={`mx-auto flex min-h-screen max-w-[1600px] ${
+          useFloatingSidebar ? "items-start px-4 py-4" : "md:h-full md:px-4 md:py-4"
+        }`}
+      >
+        <aside
+          className={`hidden w-80 shrink-0 md:flex md:pr-4 ${
+            useFloatingSidebar ? "md:sticky md:top-4 md:z-20 md:self-start" : ""
+          }`}
+        >
+          <div
+            className={`flex w-full flex-col rounded-[2rem] border border-border/70 bg-card/92 px-5 py-6 shadow-[0_24px_70px_rgba(15,23,42,0.12)] backdrop-blur ${
+              useFloatingSidebar
+                ? "h-[calc(100vh-2rem)] ring-1 ring-white/40"
+                : "sticky top-4 h-[calc(100vh-2rem)]"
+            }`}
+          >
             <div className="rounded-[1.5rem] bg-secondary p-4 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Smart Class</p>
               <h1 className="mt-2 text-2xl font-bold">{workspace.schoolName}</h1>
@@ -2312,8 +2376,16 @@ function WorkspaceShell({
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1 px-4 py-4 md:h-full md:overflow-y-auto md:rounded-[2rem] md:border md:border-border/60 md:bg-card/30 md:px-8 md:py-6 md:shadow-[0_24px_80px_rgba(15,23,42,0.08)]">
-          <div className="mb-6 flex flex-col gap-3 md:sticky md:top-0 md:z-10 md:-mx-2 md:rounded-[1.5rem] md:border md:border-border/60 md:bg-background/90 md:px-2 md:py-3 md:backdrop-blur md:flex-row md:items-center md:justify-between">
+        <main
+          className={`min-w-0 flex-1 px-4 py-4 md:rounded-[2rem] md:border md:border-border/60 md:bg-card/30 md:px-8 md:py-6 md:shadow-[0_24px_80px_rgba(15,23,42,0.08)] ${
+            useFloatingSidebar ? "self-start" : "md:h-full md:overflow-y-auto"
+          }`}
+        >
+          <div
+            className={`mb-6 flex flex-col gap-3 md:sticky md:z-10 md:-mx-2 md:rounded-[1.5rem] md:border md:border-border/60 md:bg-background/90 md:px-2 md:py-3 md:backdrop-blur md:flex-row md:items-center md:justify-between ${
+              useFloatingSidebar ? "md:top-4" : "md:top-0"
+            }`}
+          >
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-primary">{ROLE_LABELS[workspace.role]}</p>
               <h2 className="text-2xl font-bold">{workspace.schoolName}</h2>
@@ -2352,12 +2424,17 @@ async function sendMessageToRecipient({
   subject?: string;
   body: string;
 }) {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const effectiveSenderId = session?.user.id ?? senderId;
+
   const message = unwrap(
     await supabase
       .from("messages")
       .insert({
         school_id: schoolId,
-        sender_id: senderId,
+        sender_id: effectiveSenderId,
         subject: subject?.trim() || null,
         body,
       })

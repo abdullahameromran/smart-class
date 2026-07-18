@@ -844,12 +844,33 @@ returns boolean language sql stable security definer as $$
   );
 $$;
 
+create or replace function can_insert_message(p_school_id uuid)
+returns boolean language sql stable security definer as $$
+  select auth.uid() is not null
+    and (
+      is_super_admin()
+      or exists (
+        select 1
+        from user_school_roles usr
+        where usr.user_id = auth.uid()
+          and usr.school_id = p_school_id
+          and usr.is_active
+          and usr.role = any(array['school_admin','teacher','student','parent']::user_role[])
+      )
+    );
+$$;
+
 -- messages: school admins can review all school messages; others see sent or received only
 create policy msg_select on messages for select using (
   (deleted_at is null or is_super_admin()) and can_access_message(id)
 );
-create policy msg_insert on messages for insert with check ( sender_id = auth.uid() );
+create policy msg_insert on messages for insert with check (
+  can_insert_message(school_id)
+);
 create policy mr_select on message_recipients for select using (
+  can_access_message_recipient(message_id, recipient_id)
+);
+create policy mr_insert on message_recipients for insert with check (
   can_access_message_recipient(message_id, recipient_id)
 );
 create policy mr_update on message_recipients for update using ( recipient_id = auth.uid() );
@@ -909,10 +930,19 @@ begin
   return new;
 end $$;
 
+create or replace function set_message_sender() returns trigger language plpgsql as $$
+begin
+  if auth.uid() is not null then
+    new.sender_id = auth.uid();
+  end if;
+  return new;
+end $$;
+
 create trigger trg_schools_updated before update on schools for each row execute function set_updated_at();
 create trigger trg_profiles_updated before update on profiles for each row execute function set_updated_at();
 create trigger trg_lessons_updated before update on lessons for each row execute function set_updated_at();
 create trigger trg_school_subs_updated before update on school_subscriptions for each row execute function set_updated_at();
+create trigger trg_set_message_sender before insert on messages for each row execute function set_message_sender();
 
 -- Auto-grade MCQ homework answers on insert
 create or replace function grade_homework_answer() returns trigger language plpgsql as $$
