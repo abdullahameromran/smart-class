@@ -1,5 +1,5 @@
 import type { FormEvent, ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import {
   AlertCircle,
@@ -2472,6 +2472,323 @@ function EmptyState({ message }: { message: string }) {
   );
 }
 
+function initialsFor(value: string) {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0] ?? "")
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
+function avatarTone(seed: string) {
+  const palette = [
+    "bg-violet-100 text-violet-700",
+    "bg-sky-100 text-sky-700",
+    "bg-emerald-100 text-emerald-700",
+    "bg-amber-100 text-amber-700",
+    "bg-rose-100 text-rose-700",
+  ];
+  const value = seed.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return palette[value % palette.length];
+}
+
+function MessageChatWorkspace({
+  currentUserId,
+  recipientLabel,
+  recipientId,
+  subject,
+  body,
+  setRecipientId,
+  setSubject,
+  setBody,
+  recipientOptions,
+  messages,
+  busy,
+  onSend,
+}: {
+  currentUserId: string;
+  recipientLabel: string;
+  recipientId: string;
+  subject: string;
+  body: string;
+  setRecipientId: (value: string) => void;
+  setSubject: (value: string) => void;
+  setBody: (value: string) => void;
+  recipientOptions: RecipientOption[];
+  messages: MessageBundle[];
+  busy: boolean;
+  onSend: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  const initialsFor = (value: string) =>
+    value
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => part[0] ?? "")
+      .slice(0, 2)
+      .join("")
+      .toUpperCase();
+
+  const avatarTone = (seed: string) => {
+    const palette = [
+      "bg-violet-100 text-violet-700",
+      "bg-sky-100 text-sky-700",
+      "bg-emerald-100 text-emerald-700",
+      "bg-amber-100 text-amber-700",
+      "bg-rose-100 text-rose-700",
+    ];
+    const value = seed.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
+    return palette[value % palette.length];
+  };
+
+  const recipientMap = recipientOptions.reduce<Record<string, RecipientOption>>((acc, recipient) => {
+    acc[recipient.id] = recipient;
+    return acc;
+  }, {});
+
+  const conversationMap: Record<
+    string,
+    {
+      id: string;
+      recipient: RecipientOption;
+      messages: MessageBundle[];
+      preview: string;
+      lastMessageAt: string;
+    }
+  > = {};
+
+  [...messages]
+    .sort((a, b) => new Date(a.item.created_at).getTime() - new Date(b.item.created_at).getTime())
+    .forEach((bundle) => {
+      const recipient =
+        bundle.item.sender_id === currentUserId
+          ? bundle.recipients[0] ?? { id: "unknown", label: "Unknown recipient", email: null }
+          : recipientMap[bundle.item.sender_id] ?? {
+              id: bundle.item.sender_id,
+              label: bundle.senderName,
+              email: null,
+            };
+
+      const existing = conversationMap[recipient.id] ?? {
+        id: recipient.id,
+        recipient,
+        messages: [],
+        preview: "",
+        lastMessageAt: bundle.item.created_at,
+      };
+
+      existing.messages.push(bundle);
+      existing.preview = bundle.item.body;
+      existing.lastMessageAt = bundle.item.created_at;
+      conversationMap[recipient.id] = existing;
+    });
+
+  const conversations = Object.values(conversationMap).sort(
+    (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime(),
+  );
+
+  const filteredConversations = conversations.filter((conversation) => {
+    const haystack = `${conversation.recipient.label} ${conversation.preview}`.toLowerCase();
+    return haystack.includes(query.trim().toLowerCase());
+  });
+
+  const activeConversation = conversations.find((conversation) => conversation.id === recipientId) ?? null;
+
+  const activeRecipient =
+    recipientOptions.find((recipient) => recipient.id === recipientId) ??
+    activeConversation?.recipient ??
+    null;
+
+  useEffect(() => {
+    if (!recipientOptions.length) {
+      return;
+    }
+
+    if (!recipientId) {
+      setRecipientId(conversations[0]?.id ?? recipientOptions[0].id);
+      return;
+    }
+
+    if (!recipientOptions.some((recipient) => recipient.id === recipientId)) {
+      setRecipientId(conversations[0]?.id ?? recipientOptions[0].id);
+    }
+  }, [conversations, recipientId, recipientOptions, setRecipientId]);
+
+  const activeConversationMessages = activeConversation
+    ? [...activeConversation.messages].sort(
+        (a, b) => new Date(a.item.created_at).getTime() - new Date(b.item.created_at).getTime(),
+      )
+    : [];
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({
+      behavior: activeConversationMessages.length > 1 ? "smooth" : "auto",
+      block: "end",
+    });
+  }, [activeConversation?.id, activeConversationMessages.length]);
+
+  return (
+    <section className="overflow-hidden rounded-[2rem] border border-border bg-card shadow-[0_24px_70px_rgba(15,23,42,0.10)]">
+      <div className="grid h-[min(82vh,860px)] min-h-[720px] xl:grid-cols-[280px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)]">
+        <div className="flex min-h-0 flex-col border-b border-border bg-card/95 xl:border-b-0 xl:border-r">
+          <div className="border-b border-border p-4">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="h-12 rounded-2xl border-border/70 bg-white/85 pl-10"
+                placeholder="Search messages..."
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto scroll-smooth overscroll-y-contain">
+            {filteredConversations.length === 0 ? (
+              <div className="p-4">
+                <EmptyState
+                  message={
+                    messages.length === 0
+                      ? "No conversation history yet. Pick someone on the right and start the chat."
+                      : "No conversations match this search."
+                  }
+                />
+              </div>
+            ) : (
+              filteredConversations.map((conversation) => (
+                <button
+                  key={conversation.id}
+                  type="button"
+                  onClick={() => setRecipientId(conversation.recipient.id)}
+                  className={`flex w-full items-start gap-3 border-b border-border/70 px-4 py-4 text-left transition ${
+                    recipientId === conversation.id
+                      ? "bg-secondary/50 shadow-[inset_4px_0_0_theme(colors.primary.DEFAULT)]"
+                      : "hover:bg-muted/20"
+                  }`}
+                >
+                  <div
+                    className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold ${avatarTone(
+                      conversation.id,
+                    )}`}
+                  >
+                    {initialsFor(conversation.recipient.label)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="truncate font-semibold text-foreground">{conversation.recipient.label}</p>
+                      <span className="whitespace-nowrap text-xs text-muted-foreground">
+                        {formatDateTime(conversation.lastMessageAt)}
+                      </span>
+                    </div>
+                    <p className="mt-1 truncate text-sm text-muted-foreground">{conversation.preview}</p>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="flex min-h-0 flex-col bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.8),_transparent_48%),linear-gradient(180deg,rgba(248,250,252,0.95),rgba(241,245,249,0.7))]">
+          <div className="border-b border-border/70 px-5 py-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex items-center gap-3">
+                <div
+                  className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold ${avatarTone(
+                    activeRecipient?.id ?? "new",
+                  )}`}
+                >
+                  {initialsFor(activeRecipient?.label ?? "New chat")}
+                </div>
+                <div>
+                  <p className="font-semibold text-foreground">{activeRecipient?.label || "Choose a recipient"}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {activeRecipient?.email || "Private conversation"}
+                  </p>
+                </div>
+              </div>
+
+              <Select
+                value={recipientId}
+                onChange={(event) => setRecipientId(event.target.value)}
+                className="max-w-sm"
+              >
+                {recipientOptions.map((recipient) => (
+                  <option key={recipient.id} value={recipient.id}>
+                    {recipient.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto scroll-smooth overscroll-y-contain px-5 py-6">
+            <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
+              {activeConversationMessages.length === 0 ? (
+                <EmptyState message="Start a message here and this conversation will stay in one place." />
+              ) : (
+                activeConversationMessages.map((message) => {
+                  const mine = message.item.sender_id === currentUserId;
+                  return (
+                    <div key={message.item.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                      <div
+                        className={`max-w-[44rem] rounded-[1.8rem] px-5 py-4 shadow-sm xl:max-w-[52rem] ${
+                          mine ? "bg-primary text-white" : "bg-white/96 text-foreground"
+                        }`}
+                      >
+                        {message.item.subject ? (
+                          <p className={`text-xs font-semibold ${mine ? "text-white/80" : "text-muted-foreground"}`}>
+                            {message.item.subject}
+                          </p>
+                        ) : null}
+                        <p className="mt-1 text-sm leading-6">{message.item.body}</p>
+                        <p className={`mt-2 text-xs ${mine ? "text-white/70" : "text-muted-foreground"}`}>
+                          {formatDateTime(message.item.created_at)}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+          </div>
+
+          <form
+            onSubmit={onSend}
+            className="sticky bottom-0 border-t border-border/70 bg-gradient-to-t from-card via-card/95 to-card/70 px-4 pb-4 pt-3 backdrop-blur md:px-5"
+          >
+            <div className="mx-auto max-w-5xl rounded-[1.8rem] border border-border/70 bg-card/95 p-3 shadow-[0_-16px_40px_rgba(15,23,42,0.08)]">
+              <div className="grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)_auto]">
+                <Input
+                  className="h-12 rounded-2xl border-border/70 bg-white/85"
+                  placeholder="Subject (optional)"
+                  value={subject}
+                  onChange={(event) => setSubject(event.target.value)}
+                />
+                <Input
+                  className="h-12 rounded-2xl border-border/70 bg-white/85"
+                  placeholder={`Type a message to this ${recipientLabel.toLowerCase()}...`}
+                  value={body}
+                  onChange={(event) => setBody(event.target.value)}
+                  required
+                />
+                <Button className="h-12 rounded-2xl px-6" type="submit" disabled={busy || !recipientOptions.length || !recipientId}>
+                  <Send className="h-4 w-4" />
+                  Send
+                </Button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function Flash({ flash }: { flash: FlashState }) {
   if (!flash) return null;
   const styles = {
@@ -2610,41 +2927,23 @@ function WorkspaceShell({
 
 async function sendMessageToRecipient({
   schoolId,
-  senderId,
   recipientId,
   subject,
   body,
 }: {
   schoolId: string;
-  senderId: string;
   recipientId: string;
   subject?: string;
   body: string;
 }) {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  const effectiveSenderId = session?.user.id ?? senderId;
-
-  const message = unwrap(
-    await supabase
-      .from("messages")
-      .insert({
-        school_id: schoolId,
-        sender_id: effectiveSenderId,
-        subject: subject?.trim() || null,
-        body,
-      })
-      .select("id,school_id,sender_id,subject,body,created_at")
-      .single(),
-  ) as unknown as Message;
-  unwrap(
-    await supabase.from("message_recipients").insert({
-      message_id: message.id,
-      recipient_id: recipientId,
+  return unwrap(
+    await supabase.rpc("send_private_message", {
+      p_school_id: schoolId,
+      p_recipient_id: recipientId,
+      p_subject: subject?.trim() || null,
+      p_body: body.trim(),
     }),
-  );
-  return message;
+  ) as unknown as Message;
 }
 
 function slugify(value: string) {
@@ -6337,7 +6636,6 @@ function SchoolAdminPortal({
     void runAction(async () => {
       await sendMessageToRecipient({
         schoolId: data.school.id,
-        senderId: profile.id,
         recipientId: messageForm.recipient_id,
         subject: messageForm.subject,
         body: messageForm.body,
@@ -6905,7 +7203,6 @@ function SchoolAdminPortalModern({
   const [teacherQuery, setTeacherQuery] = useState("");
   const [studentQuery, setStudentQuery] = useState("");
   const [announcementQuery, setAnnouncementQuery] = useState("");
-  const [messageQuery, setMessageQuery] = useState("");
   const [showTeacherForm, setShowTeacherForm] = useState(data.teachers.length === 0);
   const [showStudentForm, setShowStudentForm] = useState(data.students.length === 0);
   const [showTimetableForm, setShowTimetableForm] = useState(data.timetable.length === 0);
@@ -6913,7 +7210,6 @@ function SchoolAdminPortalModern({
   const [selectedTimetableClassId, setSelectedTimetableClassId] = useState(data.classes[0]?.id ?? "");
   const [gradeClassFilter, setGradeClassFilter] = useState(data.classes[0]?.id ?? "");
   const [gradeSubjectFilter, setGradeSubjectFilter] = useState(data.subjects[0]?.id ?? "");
-  const [selectedConversationId, setSelectedConversationId] = useState("");
   const [daySelection, setDaySelection] = useState<number[]>(data.workingDays.map((item) => item.day_of_week));
   const [yearForm, setYearForm] = useState({
     name: "",
@@ -7008,27 +7304,6 @@ function SchoolAdminPortalModern({
   const schoolContactEmail = typeof schoolSettings.contact_email === "string" ? schoolSettings.contact_email : "";
   const schoolAddress = typeof schoolSettings.address === "string" ? schoolSettings.address : "";
   const workingDayLabels = data.workingDays.map((item) => item.label).join(", ");
-
-  const initialsFor = (value: string) =>
-    value
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((part) => part[0] ?? "")
-      .slice(0, 2)
-      .join("")
-      .toUpperCase();
-
-  const avatarTone = (seed: string) => {
-    const palette = [
-      "bg-violet-100 text-violet-700",
-      "bg-sky-100 text-sky-700",
-      "bg-emerald-100 text-emerald-700",
-      "bg-amber-100 text-amber-700",
-      "bg-rose-100 text-rose-700",
-    ];
-    const value = seed.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
-    return palette[value % palette.length];
-  };
 
   const runAction = async (work: () => Promise<void>, successMessage: string) => {
     try {
@@ -7291,7 +7566,6 @@ function SchoolAdminPortalModern({
     void runAction(async () => {
       await sendMessageToRecipient({
         schoolId: data.school.id,
-        senderId: profile.id,
         recipientId: messageForm.recipient_id,
         subject: messageForm.subject,
         body: messageForm.body,
@@ -7340,81 +7614,6 @@ function SchoolAdminPortalModern({
     count: data.students.filter((student) => student.className === item.name).length,
   }));
   const maxEnrollmentCount = Math.max(...classEnrollmentCounts.map((item) => item.count), 1);
-
-  const recipientMap = data.recipientOptions.reduce<Record<string, RecipientOption>>((acc, recipient) => {
-    acc[recipient.id] = recipient;
-    return acc;
-  }, {});
-
-  const conversationMap: Record<
-    string,
-    {
-      id: string;
-      recipient: RecipientOption;
-      messages: MessageBundle[];
-      preview: string;
-      lastMessageAt: string;
-    }
-  > = {};
-
-  [...data.messages]
-    .sort((a, b) => new Date(a.item.created_at).getTime() - new Date(b.item.created_at).getTime())
-    .forEach((bundle) => {
-      const recipient =
-        bundle.item.sender_id === profile.id
-          ? bundle.recipients[0] ?? { id: "unknown", label: "Unknown recipient", email: null }
-          : recipientMap[bundle.item.sender_id] ?? {
-              id: bundle.item.sender_id,
-              label: bundle.senderName,
-              email: null,
-            };
-      const existing = conversationMap[recipient.id] ?? {
-        id: recipient.id,
-        recipient,
-        messages: [],
-        preview: "",
-        lastMessageAt: bundle.item.created_at,
-      };
-      existing.messages.push(bundle);
-      existing.preview = bundle.item.body;
-      existing.lastMessageAt = bundle.item.created_at;
-      conversationMap[recipient.id] = existing;
-    });
-
-  const conversations = Object.values(conversationMap).sort(
-    (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime(),
-  );
-  const filteredConversations = conversations.filter((conversation) => {
-    const haystack = `${conversation.recipient.label} ${conversation.preview}`.toLowerCase();
-    return haystack.includes(messageQuery.trim().toLowerCase());
-  });
-  const activeConversation =
-    filteredConversations.find((conversation) => conversation.id === selectedConversationId) ??
-    filteredConversations[0] ??
-    null;
-
-  useEffect(() => {
-    if (filteredConversations.length > 0 && !filteredConversations.some((item) => item.id === selectedConversationId)) {
-      setSelectedConversationId(filteredConversations[0].id);
-    }
-  }, [filteredConversations, selectedConversationId]);
-
-  useEffect(() => {
-    if (activeConversation && messageForm.recipient_id !== activeConversation.recipient.id) {
-      setMessageForm((prev) => ({ ...prev, recipient_id: activeConversation.recipient.id }));
-      return;
-    }
-
-    if (!activeConversation && !messageForm.recipient_id && data.recipientOptions[0]?.id) {
-      setMessageForm((prev) => ({ ...prev, recipient_id: data.recipientOptions[0]?.id ?? "" }));
-    }
-  }, [activeConversation, data.recipientOptions, messageForm.recipient_id]);
-
-  const activeConversationMessages = activeConversation
-    ? [...activeConversation.messages].sort(
-        (a, b) => new Date(a.item.created_at).getTime() - new Date(b.item.created_at).getTime(),
-      )
-    : [];
 
   const gradeRows = data.grades.filter((grade) => {
     const matchesClass = !gradeClassFilter || grade.class_id === gradeClassFilter;
@@ -8311,107 +8510,24 @@ function SchoolAdminPortalModern({
   if (view === "messages") {
     return (
       <div className="space-y-6">
-        <SectionTrail items={["School Admin", "Messages"]} description="A larger conversation view helps when message history starts growing." />
-        <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
-          <div className="grid min-h-[680px] xl:grid-cols-[320px_1fr]">
-            <div className="border-b border-border xl:border-b-0 xl:border-r">
-              <div className="border-b border-border p-4">
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input className="pl-10" placeholder="Search messages..." value={messageQuery} onChange={(event) => setMessageQuery(event.target.value)} />
-                </div>
-              </div>
-              <div className="max-h-[620px] overflow-y-auto">
-                {filteredConversations.length === 0 ? (
-                  <div className="p-4">
-                    <EmptyState message="No visible conversations yet." />
-                  </div>
-                ) : (
-                  filteredConversations.map((conversation) => (
-                    <button
-                      key={conversation.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedConversationId(conversation.id);
-                        setMessageForm((prev) => ({ ...prev, recipient_id: conversation.recipient.id }));
-                      }}
-                      className={`flex w-full items-start gap-3 border-b border-border px-4 py-4 text-left transition ${activeConversation?.id === conversation.id ? "bg-secondary/40" : "hover:bg-muted/20"}`}
-                    >
-                      <div className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold ${avatarTone(conversation.id)}`}>
-                        {initialsFor(conversation.recipient.label)}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="truncate font-semibold text-foreground">{conversation.recipient.label}</p>
-                          <span className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTime(conversation.lastMessageAt)}</span>
-                        </div>
-                        <p className="mt-1 truncate text-sm text-muted-foreground">{conversation.preview}</p>
-                      </div>
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-            <div className="flex min-h-[680px] flex-col">
-              <div className="border-b border-border px-5 py-4">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold ${avatarTone(activeConversation?.id ?? "new")}`}>
-                      {initialsFor(activeConversation?.recipient.label ?? "New chat")}
-                    </div>
-                    <div>
-                      <p className="font-semibold text-foreground">{activeConversation?.recipient.label || "Choose a recipient"}</p>
-                      <p className="text-sm text-muted-foreground">{activeConversation?.recipient.email || "Private conversation"}</p>
-                    </div>
-                  </div>
-                  <Select
-                    value={messageForm.recipient_id}
-                    onChange={(event) => {
-                      const nextId = event.target.value;
-                      setSelectedConversationId(nextId);
-                      setMessageForm((prev) => ({ ...prev, recipient_id: nextId }));
-                    }}
-                    className="max-w-sm"
-                  >
-                    {data.recipientOptions.map((recipient) => (
-                      <option key={recipient.id} value={recipient.id}>
-                        {recipient.label}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              </div>
-              <div className="flex-1 space-y-4 overflow-y-auto bg-muted/10 p-5">
-                {activeConversationMessages.length === 0 ? (
-                  <EmptyState message="Start a message here and the conversation will appear in this space." />
-                ) : (
-                  activeConversationMessages.map((message) => {
-                    const mine = message.item.sender_id === profile.id;
-                    return (
-                      <div key={message.item.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-                        <div className={`max-w-[36rem] rounded-[1.6rem] px-4 py-4 shadow-sm ${mine ? "bg-primary text-white" : "bg-card text-foreground"}`}>
-                          {message.item.subject ? <p className={`text-xs font-semibold ${mine ? "text-white/80" : "text-muted-foreground"}`}>{message.item.subject}</p> : null}
-                          <p className="mt-1 text-sm leading-6">{message.item.body}</p>
-                          <p className={`mt-2 text-xs ${mine ? "text-white/70" : "text-muted-foreground"}`}>{formatDateTime(message.item.created_at)}</p>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-              <form onSubmit={sendMessage} className="border-t border-border bg-card p-5">
-                <div className="grid gap-3 md:grid-cols-[220px_minmax(0,1fr)_auto]">
-                  <Input placeholder="Subject (optional)" value={messageForm.subject} onChange={(event) => setMessageForm((prev) => ({ ...prev, subject: event.target.value }))} />
-                  <Input placeholder="Type a message..." value={messageForm.body} onChange={(event) => setMessageForm((prev) => ({ ...prev, body: event.target.value }))} required />
-                  <Button type="submit" disabled={busy || !messageForm.recipient_id}>
-                    <Send className="h-4 w-4" />
-                    Send
-                  </Button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </section>
+        <SectionTrail
+          items={["School Admin", "Messages"]}
+          description="Keep each chat in one smooth thread with more space for reading, replying, and scrolling."
+        />
+        <MessageChatWorkspace
+          currentUserId={profile.id}
+          recipientLabel="recipient"
+          recipientId={messageForm.recipient_id}
+          subject={messageForm.subject}
+          body={messageForm.body}
+          setRecipientId={(value) => setMessageForm((prev) => ({ ...prev, recipient_id: value }))}
+          setSubject={(value) => setMessageForm((prev) => ({ ...prev, subject: value }))}
+          setBody={(value) => setMessageForm((prev) => ({ ...prev, body: value }))}
+          recipientOptions={data.recipientOptions}
+          messages={data.messages}
+          busy={busy}
+          onSend={sendMessage}
+        />
       </div>
     );
   }
@@ -8793,7 +8909,6 @@ function TeacherPortal({
     void runAction(async () => {
       await sendMessageToRecipient({
         schoolId: data.school.id,
-        senderId: profile.id,
         recipientId: messageForm.recipient_id,
         subject: messageForm.subject,
         body: messageForm.body,
@@ -9121,6 +9236,28 @@ function TeacherPortal({
   if (view === "messages") {
     return (
       <div className="space-y-6">
+        <SectionTrail
+          items={["Teacher", "Messages"]}
+          description="Keep each conversation in one thread so you can continue replying without losing context."
+        />
+        <MessageChatWorkspace
+          currentUserId={profile.id}
+          recipientLabel="recipient"
+          recipientId={messageForm.recipient_id}
+          subject={messageForm.subject}
+          body={messageForm.body}
+          setRecipientId={(value) => setMessageForm((prev) => ({ ...prev, recipient_id: value }))}
+          setSubject={(value) => setMessageForm((prev) => ({ ...prev, subject: value }))}
+          setBody={(value) => setMessageForm((prev) => ({ ...prev, body: value }))}
+          recipientOptions={data.recipientOptions}
+          messages={data.messages}
+          busy={busy}
+          onSend={sendMessage}
+        />
+      </div>
+    );
+    return (
+      <div className="space-y-6">
         <Panel title="Compose Message">
           <form className="grid gap-4 lg:grid-cols-2" onSubmit={sendMessage}>
             <Field label="Recipient">
@@ -9302,7 +9439,6 @@ function StudentPortal({
     void runAction(async () => {
       await sendMessageToRecipient({
         schoolId: data.school.id,
-        senderId: profile.id,
         recipientId: messageForm.recipient_id,
         subject: messageForm.subject,
         body: messageForm.body,
@@ -9541,6 +9677,28 @@ function StudentPortal({
   if (view === "messages") {
     return (
       <div className="space-y-6">
+        <SectionTrail
+          items={["Student", "Messages"]}
+          description="Keep speaking in the same thread so teacher replies and your follow-ups stay together."
+        />
+        <MessageChatWorkspace
+          currentUserId={profile.id}
+          recipientLabel="teacher"
+          recipientId={messageForm.recipient_id}
+          subject={messageForm.subject}
+          body={messageForm.body}
+          setRecipientId={(value) => setMessageForm((prev) => ({ ...prev, recipient_id: value }))}
+          setSubject={(value) => setMessageForm((prev) => ({ ...prev, subject: value }))}
+          setBody={(value) => setMessageForm((prev) => ({ ...prev, body: value }))}
+          recipientOptions={data.recipientOptions}
+          messages={data.messages}
+          busy={busy}
+          onSend={sendMessage}
+        />
+      </div>
+    );
+    return (
+      <div className="space-y-6">
         <Panel title="Compose Message">
           <form className="grid gap-4 lg:grid-cols-2" onSubmit={sendMessage}>
             <Field label="Teacher">
@@ -9661,7 +9819,6 @@ function ParentPortal({
     void runAction(async () => {
       await sendMessageToRecipient({
         schoolId: data.school.id,
-        senderId: profile.id,
         recipientId: messageForm.recipient_id,
         subject: messageForm.subject,
         body: messageForm.body,
@@ -9790,6 +9947,28 @@ function ParentPortal({
   }
 
   if (view === "messages") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["Parent", "Messages"]}
+          description="Keep one clear thread with the school team so updates and replies stay easy to follow."
+        />
+        <MessageChatWorkspace
+          currentUserId={profile.id}
+          recipientLabel="teacher"
+          recipientId={messageForm.recipient_id}
+          subject={messageForm.subject}
+          body={messageForm.body}
+          setRecipientId={(value) => setMessageForm((prev) => ({ ...prev, recipient_id: value }))}
+          setSubject={(value) => setMessageForm((prev) => ({ ...prev, subject: value }))}
+          setBody={(value) => setMessageForm((prev) => ({ ...prev, body: value }))}
+          recipientOptions={data.recipientOptions}
+          messages={data.messages}
+          busy={busy}
+          onSend={sendMessage}
+        />
+      </div>
+    );
     return (
       <div className="space-y-6">
         <Panel title="Compose Message">
