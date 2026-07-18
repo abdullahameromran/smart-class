@@ -1,6 +1,6 @@
 -- =====================================================================
 -- SMART CLASS — STARTER SEED DATA
--- Optional. Safe to run once after the schema + storage policies.
+-- Safe to run after the schema migration.
 -- =====================================================================
 
 insert into subscription_plans (name, max_students, max_teachers, price_cents, billing_cycle, features)

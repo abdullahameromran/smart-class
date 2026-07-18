@@ -1027,7 +1027,16 @@ begin
   select a.author_id, a.school_id into v_author_id, v_school_id
   from announcements a where a.id = new.announcement_id;
 
-  v_is_admin := user_has_school_role(v_school_id, array['school_admin']::user_role[]);
+  select exists (
+    select 1
+    from user_school_roles usr
+    where usr.user_id = v_author_id
+      and usr.is_active
+      and (
+        (usr.role = 'super_admin' and usr.school_id is null)
+        or (usr.role = 'school_admin' and usr.school_id = v_school_id)
+      )
+  ) into v_is_admin;
 
   if not v_is_admin then
     if new.target_type <> 'class' then
