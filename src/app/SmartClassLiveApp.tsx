@@ -597,14 +597,15 @@ const NAV_BY_ROLE: Record<UserRole, NavItem[]> = {
     { id: "messages", label: "Messages", icon: <Mail className="w-4 h-4" /> },
   ],
   teacher: [
-    { id: "dashboard", label: "Overview", icon: <Home className="w-4 h-4" /> },
-    { id: "lessons", label: "Lessons", icon: <BookOpen className="w-4 h-4" /> },
-    { id: "homework", label: "Homework", icon: <ClipboardList className="w-4 h-4" /> },
-    { id: "tests", label: "Tests", icon: <CheckSquare className="w-4 h-4" /> },
-    { id: "students", label: "Students", icon: <Users className="w-4 h-4" /> },
-    { id: "timetable", label: "Timetable", icon: <Calendar className="w-4 h-4" /> },
+    { id: "dashboard", label: "Home Page", icon: <Home className="w-4 h-4" /> },
+    { id: "lessons", label: "Classes", icon: <BookOpen className="w-4 h-4" /> },
+    { id: "homework", label: "Tasks & HM", icon: <ClipboardList className="w-4 h-4" /> },
+    { id: "tests", label: "Monthly Test", icon: <CheckSquare className="w-4 h-4" /> },
+    { id: "grades", label: "Final Results", icon: <GraduationCap className="w-4 h-4" /> },
+    { id: "students", label: "My Students", icon: <Users className="w-4 h-4" /> },
+    { id: "messages", label: "Ticketing System", icon: <Mail className="w-4 h-4" /> },
+    { id: "timetable", label: "Time Table", icon: <Calendar className="w-4 h-4" /> },
     { id: "announcements", label: "Announcements", icon: <Megaphone className="w-4 h-4" /> },
-    { id: "messages", label: "Messages", icon: <Mail className="w-4 h-4" /> },
   ],
   student: [
     { id: "dashboard", label: "Overview", icon: <Home className="w-4 h-4" /> },
@@ -3130,6 +3131,9 @@ function LandingPage({
                 <p className="mt-2 text-sm text-muted-foreground">
                   We now have a basic landing page at `/`, plus separate `/login` and `/signup` screens.
                 </p>
+                <Button type="button" variant="secondary" onClick={() => setActiveTestId(item.item.id)}>
+                  Open test
+                </Button>
               </div>
               <div className="rounded-[1.75rem] border border-border/60 bg-muted/45 p-5">
                 <p className="text-sm font-semibold text-foreground">Dashboard pages now</p>
@@ -5480,7 +5484,7 @@ function SuperAdminPortal({
               />
             </Field>
           </div>
-          <div className="space-y-3">
+          <div className="grid gap-3 lg:grid-cols-2">
             {peopleRows.length === 0 ? (
               <EmptyState message="No matching profiles found." />
             ) : (
@@ -5588,7 +5592,7 @@ function SuperAdminPortal({
               />
             </Field>
           </div>
-          <div className="space-y-3">
+          <div className="grid gap-3 lg:grid-cols-2">
             {filteredRoleRows.length === 0 ? (
               <EmptyState message="No matching role assignments found." />
             ) : (
@@ -7045,7 +7049,12 @@ function SchoolAdminPortal({
         >
           <div className="space-y-3">
             {data.students.map((student) => (
-              <div key={student.userId} className="rounded-2xl bg-muted/30 p-4">
+              <button
+                key={student.userId}
+                type="button"
+                onClick={() => setActiveStudentId(student.userId)}
+                className="rounded-2xl bg-muted/30 p-4 text-left transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-sm"
+              >
                 <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
                   <div>
                     <p className="font-semibold">{student.name}</p>
@@ -7059,7 +7068,7 @@ function SchoolAdminPortal({
                 <p className="mt-2 text-xs text-muted-foreground">
                   Parents: {student.parents.length > 0 ? student.parents.join(", ") : "Not linked yet"}
                 </p>
-              </div>
+              </button>
             ))}
           </div>
         </Panel>
@@ -7203,6 +7212,49 @@ function SchoolAdminPortal({
             ))}
           </div>
         </Panel>
+      </div>
+    );
+  }
+
+  if (view === "grades") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["Teacher", "Final Results"]}
+          description="Open one result at a time so you can review the student, class, and remarks clearly."
+          action={<Badge>{data.grades.length} results</Badge>}
+        />
+        <div className="grid gap-4 md:grid-cols-3">
+          <StatCard label="Published" value={data.grades.filter((grade) => grade.status === "approved").length} />
+          <StatCard label="Pending" value={data.grades.filter((grade) => grade.status !== "approved").length} />
+          <StatCard label="Subjects" value={unique(data.grades.map((grade) => grade.subject_id)).length} />
+        </div>
+        <Panel title="Result Directory" description="Tap a row to open the fuller grade summary in a popup.">
+          {data.grades.length === 0 ? (
+            <EmptyState message="No final results are available yet." />
+          ) : (
+            <div className="space-y-3">
+              {data.grades.map((grade) => (
+                <div key={grade.id} className="flex flex-col gap-3 rounded-2xl bg-muted/30 p-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-semibold text-foreground">{studentMap[grade.student_id]?.name ?? "Student"}</p>
+                      <Badge>{subjectMap[grade.subject_id]?.name ?? "Subject"}</Badge>
+                      <Badge>{classMap[grade.class_id]?.name ?? "Class"}</Badge>
+                    </div>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Grade {grade.grade_letter || "N/A"} / {grade.grade_value ?? "N/A"} / {titleCaseLabel(grade.status)}
+                    </p>
+                  </div>
+                  <Button type="button" variant="secondary" onClick={() => setActiveGradeId(grade.id)}>
+                    Open result
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+        {gradePopup}
       </div>
     );
   }
@@ -9200,6 +9252,13 @@ function TeacherPortal({
   onRefresh: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [activeClassId, setActiveClassId] = useState<string | null>(null);
+  const [activeLessonId, setActiveLessonId] = useState<string | null>(null);
+  const [activeHomeworkId, setActiveHomeworkId] = useState<string | null>(null);
+  const [activeTestId, setActiveTestId] = useState<string | null>(null);
+  const [activeStudentId, setActiveStudentId] = useState<string | null>(null);
+  const [activeAnnouncementId, setActiveAnnouncementId] = useState<string | null>(null);
+  const [activeGradeId, setActiveGradeId] = useState<string | null>(null);
   const [lessonForm, setLessonForm] = useState({
     title: "",
     class_id: data.assignments.find((item) => item.class_id)?.class_id ?? data.classes[0]?.id ?? "",
@@ -9252,6 +9311,56 @@ function TeacherPortal({
 
   const classMap = byId(data.classes);
   const subjectMap = byId(data.subjects);
+  const lessonMap = byId(data.lessons);
+  const studentMap = data.students.reduce<Record<string, StudentSummary>>((acc, student) => {
+    acc[student.userId] = student;
+    return acc;
+  }, {});
+  const assignedClassIds = unique(
+    data.assignments.map((item) => item.class_id).filter((classId): classId is string => Boolean(classId)),
+  );
+  const homeworkClassId = (bundle: HomeworkBundle) => bundle.lesson?.class_id ?? lessonMap[bundle.item.lesson_id]?.class_id ?? null;
+  const homeworkClassName = (bundle: HomeworkBundle) => {
+    const classId = homeworkClassId(bundle);
+    return classId ? classMap[classId]?.name ?? "Class" : "Class";
+  };
+  const averageScore = (scores: Array<number | null>) => {
+    const validScores = scores.filter((score): score is number => typeof score === "number");
+    if (validScores.length === 0) return null;
+    return Math.round((validScores.reduce((sum, score) => sum + score, 0) / validScores.length) * 100) / 100;
+  };
+  const classSummaries = assignedClassIds.map((classId) => {
+    const lessons = data.lessons.filter((lesson) => lesson.class_id === classId);
+    const homework = data.homework.filter((bundle) => homeworkClassId(bundle) === classId);
+    const tests = data.tests.filter((bundle) => bundle.item.class_id === classId);
+    const students = data.students.filter((student) => student.className === (classMap[classId]?.name ?? ""));
+    const latestLesson =
+      [...lessons].sort((a, b) => new Date(b.lesson_date).getTime() - new Date(a.lesson_date).getTime())[0] ?? null;
+
+    return {
+      classId,
+      classRecord: classMap[classId] ?? null,
+      subjectNames: unique(
+        data.assignments
+          .filter((assignment) => assignment.class_id === classId)
+          .map((assignment) => subjectMap[assignment.subject_id]?.name ?? "Subject"),
+      ),
+      lessons,
+      homework,
+      tests,
+      students,
+      latestLesson,
+    };
+  });
+  const selectedClass = activeClassId ? classSummaries.find((item) => item.classId === activeClassId) ?? null : null;
+  const selectedLesson = activeLessonId ? data.lessons.find((lesson) => lesson.id === activeLessonId) ?? null : null;
+  const selectedHomework = activeHomeworkId ? data.homework.find((item) => item.item.id === activeHomeworkId) ?? null : null;
+  const selectedTest = activeTestId ? data.tests.find((item) => item.item.id === activeTestId) ?? null : null;
+  const selectedStudent = activeStudentId ? data.students.find((student) => student.userId === activeStudentId) ?? null : null;
+  const selectedAnnouncement = activeAnnouncementId
+    ? data.announcements.find((announcement) => announcement.item.id === activeAnnouncementId) ?? null
+    : null;
+  const selectedGrade = activeGradeId ? data.grades.find((grade) => grade.id === activeGradeId) ?? null : null;
 
   const runAction = async (work: () => Promise<void>, successMessage: string) => {
     try {
@@ -9468,9 +9577,470 @@ function TeacherPortal({
     }, "Message sent.");
   };
 
+  const classPopup = selectedClass ? (
+    <PopupModal
+      open={!!selectedClass}
+      onClose={() => setActiveClassId(null)}
+      title={selectedClass.classRecord?.name ?? "Class"}
+      description="Open one class at a time so lessons, homework, tests, and students have more room."
+    >
+      <div className="grid gap-6 xl:grid-cols-[0.92fr_1.08fr]">
+        <div className="space-y-4">
+          <div className="rounded-[1.7rem] bg-muted/30 p-5">
+            <div className="flex flex-wrap items-center gap-2">
+              {selectedClass.subjectNames.map((subject) => (
+                <Badge key={subject}>{subject}</Badge>
+              ))}
+              <Badge tone="success">{selectedClass.students.length} students</Badge>
+            </div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl bg-card px-4 py-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Lessons</p>
+                <p className="mt-2 text-lg font-bold text-foreground">{selectedClass.lessons.length}</p>
+              </div>
+              <div className="rounded-2xl bg-card px-4 py-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Homework</p>
+                <p className="mt-2 text-lg font-bold text-foreground">{selectedClass.homework.length}</p>
+              </div>
+              <div className="rounded-2xl bg-card px-4 py-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tests</p>
+                <p className="mt-2 text-lg font-bold text-foreground">{selectedClass.tests.length}</p>
+              </div>
+              <div className="rounded-2xl bg-card px-4 py-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Latest lesson</p>
+                <p className="mt-2 text-sm font-semibold text-foreground">
+                  {selectedClass.latestLesson?.title ?? "No lessons yet"}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-[1.7rem] bg-muted/20 p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h4 className="text-lg font-bold text-foreground">Students</h4>
+                <p className="mt-1 text-sm text-muted-foreground">Quick view of the learners in this class.</p>
+              </div>
+              <Badge>{selectedClass.students.length} enrolled</Badge>
+            </div>
+            {selectedClass.students.length === 0 ? (
+              <div className="mt-4">
+                <EmptyState message="No students are linked to this class yet." />
+              </div>
+            ) : (
+              <div className="mt-4 space-y-3">
+                {selectedClass.students.map((student) => (
+                  <div key={student.userId} className="rounded-2xl bg-card px-4 py-4">
+                    <p className="font-semibold text-foreground">{student.name}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">{student.email || "No email added yet"}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <Panel title="Recent lessons" description="Open a lesson to review the content shared with students.">
+            {selectedClass.lessons.length === 0 ? (
+              <EmptyState message="No lessons have been added for this class yet." />
+            ) : (
+              <div className="space-y-3">
+                {selectedClass.lessons
+                  .slice()
+                  .sort((a, b) => new Date(b.lesson_date).getTime() - new Date(a.lesson_date).getTime())
+                  .map((lesson) => (
+                    <div key={lesson.id} className="flex flex-col gap-3 rounded-2xl bg-muted/25 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="font-semibold text-foreground">{lesson.title}</p>
+                        <p className="mt-1 text-sm text-muted-foreground">{formatDate(lesson.lesson_date)}</p>
+                      </div>
+                      <Button type="button" variant="secondary" onClick={() => setActiveLessonId(lesson.id)}>
+                        Open lesson
+                      </Button>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </Panel>
+
+          <Panel title="Linked work" description="Homework and tests connected to this class stay together here.">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-[1.5rem] bg-muted/25 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <h4 className="font-bold text-foreground">Homework</h4>
+                  <Badge>{selectedClass.homework.length}</Badge>
+                </div>
+                <div className="mt-4 space-y-3">
+                  {selectedClass.homework.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No homework yet.</p>
+                  ) : (
+                    selectedClass.homework.slice(0, 4).map((bundle) => (
+                      <button
+                        key={bundle.item.id}
+                        type="button"
+                        onClick={() => setActiveHomeworkId(bundle.item.id)}
+                        className="w-full rounded-2xl bg-card px-4 py-3 text-left transition hover:border-primary/30 hover:shadow-sm"
+                      >
+                        <p className="font-semibold text-foreground">{bundle.item.title}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{bundle.questions.length} questions</p>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-[1.5rem] bg-muted/25 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <h4 className="font-bold text-foreground">Tests</h4>
+                  <Badge>{selectedClass.tests.length}</Badge>
+                </div>
+                <div className="mt-4 space-y-3">
+                  {selectedClass.tests.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No tests yet.</p>
+                  ) : (
+                    selectedClass.tests.slice(0, 4).map((bundle) => (
+                      <button
+                        key={bundle.item.id}
+                        type="button"
+                        onClick={() => setActiveTestId(bundle.item.id)}
+                        className="w-full rounded-2xl bg-card px-4 py-3 text-left transition hover:border-primary/30 hover:shadow-sm"
+                      >
+                        <p className="font-semibold text-foreground">{bundle.item.title}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{bundle.questions.length} questions</p>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </Panel>
+        </div>
+      </div>
+    </PopupModal>
+  ) : null;
+
+  const lessonPopup = selectedLesson ? (
+    <PopupModal
+      open={!!selectedLesson}
+      onClose={() => setActiveLessonId(null)}
+      title={selectedLesson.title}
+      description="Review the lesson in a larger space without leaving the teacher workspace."
+    >
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Class</p>
+          <p className="mt-2 font-bold text-foreground">{classMap[selectedLesson.class_id]?.name ?? "Class"}</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Subject</p>
+          <p className="mt-2 font-bold text-foreground">{subjectMap[selectedLesson.subject_id]?.name ?? "Subject"}</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Date</p>
+          <p className="mt-2 font-bold text-foreground">{formatDate(selectedLesson.lesson_date)}</p>
+        </div>
+      </div>
+      <Panel title="Lesson notes" description="The description and support link are shown together here.">
+        <div className="space-y-4">
+          <div className="rounded-2xl bg-muted/25 p-4">
+            <p className="text-sm leading-6 text-foreground">{selectedLesson.description || "No description added yet."}</p>
+          </div>
+          <div className="rounded-2xl bg-muted/25 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Video URL</p>
+            <p className="mt-2 text-sm text-foreground">{selectedLesson.video_url || "No video link attached yet."}</p>
+          </div>
+        </div>
+      </Panel>
+    </PopupModal>
+  ) : null;
+
+  const homeworkPopup = selectedHomework ? (
+    <PopupModal
+      open={!!selectedHomework}
+      onClose={() => setActiveHomeworkId(null)}
+      title={selectedHomework.item.title}
+      description="Review the homework setup, questions, and submission progress in one place."
+    >
+      <div className="grid gap-4 sm:grid-cols-4">
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Class</p>
+          <p className="mt-2 font-bold text-foreground">{homeworkClassName(selectedHomework)}</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Due date</p>
+          <p className="mt-2 font-bold text-foreground">{formatDateTime(selectedHomework.item.due_date)}</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Questions</p>
+          <p className="mt-2 font-bold text-foreground">{selectedHomework.questions.length}</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Average score</p>
+          <p className="mt-2 font-bold text-foreground">
+            {averageScore(selectedHomework.submissions.map((submission) => submission.score)) ?? "Pending"}
+          </p>
+        </div>
+      </div>
+      <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+        <Panel title="Questions" description="Review the multiple-choice structure before students submit.">
+          {selectedHomework.questions.length === 0 ? (
+            <EmptyState message="No questions have been added to this homework yet." />
+          ) : (
+            <div className="space-y-3">
+              {selectedHomework.questions.map((question, index) => (
+                <div key={question.id} className="rounded-2xl bg-muted/25 p-4">
+                  <p className="font-semibold text-foreground">Question {index + 1}</p>
+                  <p className="mt-2 text-sm text-foreground">{question.question_text}</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {question.choices.map((choice) => (
+                      <Badge key={choice.id} tone={choice.is_correct ? "success" : "default"}>
+                        {choice.choice_text}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+        <Panel title="Submissions" description="See how many learners have already sent their work.">
+          {selectedHomework.submissions.length === 0 ? (
+            <EmptyState message="No homework submissions yet." />
+          ) : (
+            <div className="space-y-3">
+              {selectedHomework.submissions.map((submission) => (
+                <div key={submission.id} className="rounded-2xl bg-muted/25 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-foreground">
+                        {studentMap[submission.student_id]?.name ?? "Student"}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">{formatDateTime(submission.submitted_at)}</p>
+                    </div>
+                    <Badge tone={submission.score == null ? "warning" : "success"}>
+                      {submission.score == null ? "Pending" : `Score ${submission.score}`}
+                    </Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      </div>
+    </PopupModal>
+  ) : null;
+
+  const testPopup = selectedTest ? (
+    <PopupModal
+      open={!!selectedTest}
+      onClose={() => setActiveTestId(null)}
+      title={selectedTest.item.title}
+      description="Open the test details, question set, and student submission progress."
+    >
+      <div className="grid gap-4 sm:grid-cols-4">
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Class</p>
+          <p className="mt-2 font-bold text-foreground">{classMap[selectedTest.item.class_id]?.name ?? "Class"}</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Date</p>
+          <p className="mt-2 font-bold text-foreground">{formatDate(selectedTest.item.test_date)}</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Duration</p>
+          <p className="mt-2 font-bold text-foreground">{selectedTest.item.duration_minutes} minutes</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Questions</p>
+          <p className="mt-2 font-bold text-foreground">{selectedTest.questions.length}</p>
+        </div>
+      </div>
+      <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+        <Panel title="Question set" description="Check the question flow and correct answers.">
+          {selectedTest.questions.length === 0 ? (
+            <EmptyState message="No questions have been added to this test yet." />
+          ) : (
+            <div className="space-y-3">
+              {selectedTest.questions.map((question, index) => (
+                <div key={question.id} className="rounded-2xl bg-muted/25 p-4">
+                  <p className="font-semibold text-foreground">Question {index + 1}</p>
+                  <p className="mt-2 text-sm text-foreground">{question.question_text}</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {question.choices.map((choice) => (
+                      <Badge key={choice.id} tone={choice.is_correct ? "success" : "default"}>
+                        {choice.choice_text}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+        <Panel title="Submissions" description="This list shows who has already completed the test.">
+          {selectedTest.submissions.length === 0 ? (
+            <EmptyState message="No test submissions yet." />
+          ) : (
+            <div className="space-y-3">
+              {selectedTest.submissions.map((submission) => (
+                <div key={submission.id} className="rounded-2xl bg-muted/25 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-foreground">
+                        {studentMap[submission.student_id]?.name ?? "Student"}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">{formatDateTime(submission.submitted_at)}</p>
+                    </div>
+                    <Badge tone={submission.score == null ? "warning" : "success"}>
+                      {submission.score == null ? "Pending" : `Score ${submission.score}`}
+                    </Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      </div>
+    </PopupModal>
+  ) : null;
+
+  const studentPopup = selectedStudent ? (
+    <PopupModal
+      open={!!selectedStudent}
+      onClose={() => setActiveStudentId(null)}
+      title={selectedStudent.name}
+      description="Open one learner at a time to review class placement and related work."
+    >
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Class</p>
+          <p className="mt-2 font-bold text-foreground">{selectedStudent.className}</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Homework in class</p>
+          <p className="mt-2 font-bold text-foreground">
+            {data.homework.filter((bundle) => homeworkClassName(bundle) === selectedStudent.className).length}
+          </p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tests in class</p>
+          <p className="mt-2 font-bold text-foreground">
+            {data.tests.filter((bundle) => classMap[bundle.item.class_id]?.name === selectedStudent.className).length}
+          </p>
+        </div>
+      </div>
+      <Panel title="Student profile" description="A clearer read-only view for classroom follow-up.">
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="Student name">
+            <Input value={selectedStudent.name} readOnly />
+          </Field>
+          <Field label="Email">
+            <Input value={selectedStudent.email || ""} placeholder="No email added yet" readOnly />
+          </Field>
+          <Field label="Class">
+            <Input value={selectedStudent.className} readOnly />
+          </Field>
+          <Field label="Open class workspace">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                const matchingClass = data.classes.find((item) => item.name === selectedStudent.className);
+                if (matchingClass) {
+                  setActiveStudentId(null);
+                  setActiveClassId(matchingClass.id);
+                }
+              }}
+            >
+              Open class
+            </Button>
+          </Field>
+        </div>
+      </Panel>
+    </PopupModal>
+  ) : null;
+
+  const announcementPopup = selectedAnnouncement ? (
+    <PopupModal
+      open={!!selectedAnnouncement}
+      onClose={() => setActiveAnnouncementId(null)}
+      title={selectedAnnouncement.item.title}
+      description="Read the full announcement in a wider space before sending the next update."
+    >
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Audience</p>
+          <p className="mt-2 font-bold text-foreground">{selectedAnnouncement.audience}</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Author</p>
+          <p className="mt-2 font-bold text-foreground">{selectedAnnouncement.authorName}</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Published</p>
+          <p className="mt-2 font-bold text-foreground">
+            {formatDateTime(selectedAnnouncement.item.published_at || selectedAnnouncement.item.created_at)}
+          </p>
+        </div>
+      </div>
+      <Panel title="Message body">
+        <div className="rounded-2xl bg-muted/25 p-5">
+          <p className="text-sm leading-6 text-foreground">{selectedAnnouncement.item.body}</p>
+        </div>
+      </Panel>
+    </PopupModal>
+  ) : null;
+
+  const gradePopup = selectedGrade ? (
+    <PopupModal
+      open={!!selectedGrade}
+      onClose={() => setActiveGradeId(null)}
+      title={studentMap[selectedGrade.student_id]?.name ?? "Final Result"}
+      description="Open a fuller grade summary for one student and subject."
+    >
+      <div className="grid gap-4 sm:grid-cols-4">
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Subject</p>
+          <p className="mt-2 font-bold text-foreground">{subjectMap[selectedGrade.subject_id]?.name ?? "Subject"}</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Class</p>
+          <p className="mt-2 font-bold text-foreground">{classMap[selectedGrade.class_id]?.name ?? "Class"}</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Grade</p>
+          <p className="mt-2 font-bold text-foreground">
+            {selectedGrade.grade_letter || "N/A"} / {selectedGrade.grade_value ?? "N/A"}
+          </p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</p>
+          <p className="mt-2 font-bold text-foreground">{titleCaseLabel(selectedGrade.status)}</p>
+        </div>
+      </div>
+      <Panel title="Teacher remarks" description="Notes saved with this final result stay visible here.">
+        <div className="rounded-2xl bg-muted/25 p-5">
+          <p className="text-sm leading-6 text-foreground">{selectedGrade.remarks || "No remarks added yet."}</p>
+        </div>
+      </Panel>
+    </PopupModal>
+  ) : null;
+
   if (view === "lessons") {
     return (
       <div className="space-y-6">
+        <SectionTrail
+          items={["Teacher", "Classes"]}
+          description="Move class by class so lessons, homework, and students are easier to manage."
+          action={<Badge>{assignedClassIds.length} classes</Badge>}
+        />
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Total Classes" value={assignedClassIds.length} sub="Your active teaching groups" />
+          <StatCard label="Total Lessons" value={data.lessons.length} sub="Across your classes" />
+          <StatCard label="Total Students" value={data.students.length} sub="Current visible learners" />
+          <StatCard label="Homework Set" value={data.homework.length} sub="Assigned to your classes" />
+        </div>
         <Panel title="Create Lesson" description="Add a new lesson for one of your classes.">
           <form className="grid gap-4 lg:grid-cols-2" onSubmit={createLesson}>
             <Field label="Lesson title">
@@ -9508,21 +10078,80 @@ function TeacherPortal({
             </div>
           </form>
         </Panel>
-        <Panel title="Lessons">
-          <div className="space-y-3">
-            {data.lessons.map((lesson) => (
-              <div key={lesson.id} className="rounded-2xl bg-muted/30 p-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="font-semibold">{lesson.title}</p>
-                  <Badge>{classMap[lesson.class_id]?.name ?? "Class"}</Badge>
-                  <Badge>{subjectMap[lesson.subject_id]?.name ?? "Subject"}</Badge>
+        <Panel title="My Classes" description="Open one class card to see more space for class details and linked work.">
+          {classSummaries.length === 0 ? (
+            <EmptyState message="No class assignments are linked to this teacher yet." />
+          ) : (
+            <div className="grid gap-4 xl:grid-cols-2">
+              {classSummaries.map((summary) => (
+                <div key={summary.classId} className="rounded-[1.7rem] border border-border bg-muted/20 p-5">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <p className="text-2xl font-bold text-foreground">{summary.classRecord?.name ?? "Class"}</p>
+                      <p className="mt-1 text-sm text-muted-foreground">{summary.subjectNames.join(", ") || "No subjects yet"}</p>
+                    </div>
+                    <Badge tone="success">{summary.students.length} students</Badge>
+                  </div>
+                  <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-2xl bg-card px-4 py-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Lessons</p>
+                      <p className="mt-2 text-lg font-bold text-foreground">{summary.lessons.length}</p>
+                    </div>
+                    <div className="rounded-2xl bg-card px-4 py-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Homework</p>
+                      <p className="mt-2 text-lg font-bold text-foreground">{summary.homework.length}</p>
+                    </div>
+                    <div className="rounded-2xl bg-card px-4 py-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tests</p>
+                      <p className="mt-2 text-lg font-bold text-foreground">{summary.tests.length}</p>
+                    </div>
+                  </div>
+                  <div className="mt-5 rounded-2xl bg-card px-4 py-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Latest lesson</p>
+                    <p className="mt-2 font-semibold text-foreground">{summary.latestLesson?.title ?? "No lesson yet"}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {summary.latestLesson ? formatDate(summary.latestLesson.lesson_date) : "Create the first lesson for this class."}
+                    </p>
+                  </div>
+                  <div className="mt-5">
+                    <Button type="button" variant="secondary" onClick={() => setActiveClassId(summary.classId)}>
+                      Open class
+                    </Button>
+                  </div>
                 </div>
-                <p className="mt-2 text-sm text-muted-foreground">{lesson.description || "No description"}</p>
-                <p className="mt-2 text-xs text-muted-foreground">{formatDate(lesson.lesson_date)}</p>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </Panel>
+        <Panel title="Recent Lessons" description="Open any lesson to review the full details in a popup.">
+          {data.lessons.length === 0 ? (
+            <EmptyState message="No lessons created yet." />
+          ) : (
+            <div className="space-y-3">
+              {data.lessons
+                .slice()
+                .sort((a, b) => new Date(b.lesson_date).getTime() - new Date(a.lesson_date).getTime())
+                .map((lesson) => (
+                  <div key={lesson.id} className="flex flex-col gap-3 rounded-2xl bg-muted/30 p-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-semibold">{lesson.title}</p>
+                        <Badge>{classMap[lesson.class_id]?.name ?? "Class"}</Badge>
+                        <Badge>{subjectMap[lesson.subject_id]?.name ?? "Subject"}</Badge>
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">{lesson.description || "No description yet."}</p>
+                      <p className="mt-2 text-xs text-muted-foreground">{formatDate(lesson.lesson_date)}</p>
+                    </div>
+                    <Button type="button" variant="secondary" onClick={() => setActiveLessonId(lesson.id)}>
+                      Open lesson
+                    </Button>
+                  </div>
+                ))}
+            </div>
+          )}
+        </Panel>
+        {classPopup}
+        {lessonPopup}
       </div>
     );
   }
@@ -9530,6 +10159,11 @@ function TeacherPortal({
   if (view === "homework") {
     return (
       <div className="space-y-6">
+        <SectionTrail
+          items={["Teacher", "Tasks & Homework"]}
+          description="Keep homework cleaner by opening the full details only when you need them."
+          action={<Badge>{data.homework.length} homework items</Badge>}
+        />
         <Panel title="Create Homework" description="Pick a lesson and set homework for students.">
           <form className="grid gap-4 lg:grid-cols-3" onSubmit={createHomework}>
             <Field label="Homework title">
@@ -9580,20 +10214,33 @@ function TeacherPortal({
           </form>
         </Panel>
         <Panel title="Homework List">
-          <div className="space-y-3">
-            {data.homework.map((item) => (
-              <div key={item.item.id} className="rounded-2xl bg-muted/30 p-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="font-semibold">{item.item.title}</p>
-                  <Badge>{item.lesson ? classMap[item.lesson.class_id]?.name ?? "Class" : "Lesson missing"}</Badge>
-                  <Badge>{item.questions.length} questions</Badge>
-                  <Badge>{item.submissions.length} submissions</Badge>
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">Due {formatDateTime(item.item.due_date)}</p>
-              </div>
-            ))}
-          </div>
+          {data.homework.length === 0 ? (
+            <EmptyState message="No homework has been created yet." />
+          ) : (
+            <div className="space-y-3">
+              {data.homework
+                .slice()
+                .sort((a, b) => new Date(a.item.due_date).getTime() - new Date(b.item.due_date).getTime())
+                .map((item) => (
+                  <div key={item.item.id} className="flex flex-col gap-3 rounded-2xl bg-muted/30 p-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-semibold">{item.item.title}</p>
+                        <Badge>{homeworkClassName(item)}</Badge>
+                        <Badge>{item.questions.length} questions</Badge>
+                        <Badge>{item.submissions.length} submissions</Badge>
+                      </div>
+                      <p className="mt-2 text-xs text-muted-foreground">Due {formatDateTime(item.item.due_date)}</p>
+                    </div>
+                    <Button type="button" variant="secondary" onClick={() => setActiveHomeworkId(item.item.id)}>
+                      Open homework
+                    </Button>
+                  </div>
+                ))}
+            </div>
+          )}
         </Panel>
+        {homeworkPopup}
       </div>
     );
   }
@@ -9601,6 +10248,11 @@ function TeacherPortal({
   if (view === "tests") {
     return (
       <div className="space-y-6">
+        <SectionTrail
+          items={["Teacher", "Monthly Test"]}
+          description="Build the test, then open it in a wider review space to check questions and submissions."
+          action={<Badge>{data.tests.length} tests</Badge>}
+        />
         <Panel title="Create Test">
           <form className="grid gap-4 lg:grid-cols-3" onSubmit={createTest}>
             <Field label="Test title">
@@ -9671,7 +10323,7 @@ function TeacherPortal({
         <Panel title="Tests">
           <div className="space-y-3">
             {data.tests.map((item) => (
-              <div key={item.item.id} className="rounded-2xl bg-muted/30 p-4">
+              <div key={item.item.id} className="flex flex-col gap-3 rounded-2xl bg-muted/30 p-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="font-semibold">{item.item.title}</p>
                   <Badge>{classMap[item.item.class_id]?.name ?? "Class"}</Badge>
@@ -9685,6 +10337,7 @@ function TeacherPortal({
             ))}
           </div>
         </Panel>
+        {testPopup}
       </div>
     );
   }
@@ -9692,6 +10345,11 @@ function TeacherPortal({
   if (view === "students") {
     return (
       <div className="space-y-6">
+        <SectionTrail
+          items={["Teacher", "My Students"]}
+          description="See the student list in a calmer layout and open each learner in a larger popup."
+          action={<Badge>{data.students.length} students</Badge>}
+        />
         <div className="grid gap-4 md:grid-cols-3">
           <StatCard label="Assigned Students" value={data.students.length} />
           <StatCard label="Homework Items" value={data.homework.length} />
@@ -9784,7 +10442,7 @@ function TeacherPortal({
     return (
       <div className="space-y-6">
         <SectionTrail
-          items={["Teacher", "Messages"]}
+          items={["Teacher", "Ticketing System"]}
           description="Keep each conversation in one thread so you can continue replying without losing context."
         />
         <MessageChatWorkspace
