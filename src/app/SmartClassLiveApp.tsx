@@ -3507,10 +3507,10 @@ function LandingPage({
   ];
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-background text-foreground">
+    <div className="relative min-h-screen overflow-x-hidden bg-background text-foreground">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(124,92,191,0.18),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.16),_transparent_24%),linear-gradient(180deg,_rgba(255,255,255,0.9),_rgba(245,243,255,0.96))]" />
-      <div className="relative mx-auto flex min-h-screen max-w-7xl flex-col px-4 py-6 lg:px-6">
-        <header className="sticky top-4 z-30 flex flex-wrap items-center justify-between gap-4 rounded-[2rem] border border-border/70 bg-card/88 px-5 py-4 shadow-[0_24px_70px_rgba(15,23,42,0.08)] backdrop-blur-xl transition-all duration-500 hover:-translate-y-0.5 hover:shadow-[0_30px_80px_rgba(15,23,42,0.1)]">
+      <div className="relative mx-auto flex min-h-screen max-w-7xl flex-col px-4 pb-6 pt-32 lg:px-6 lg:pt-36">
+        <header className="fixed left-1/2 top-4 z-40 flex w-[calc(100%-2rem)] max-w-7xl -translate-x-1/2 flex-wrap items-center justify-between gap-4 rounded-[2rem] border border-border/70 bg-card/84 px-5 py-4 shadow-[0_24px_70px_rgba(15,23,42,0.08)] backdrop-blur-xl transition-all duration-500 hover:-translate-y-0.5 hover:shadow-[0_30px_80px_rgba(15,23,42,0.1)]">
           <div className="flex items-center gap-4">
             <img
               src={smartClassLogo}
