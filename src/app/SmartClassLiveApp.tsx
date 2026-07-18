@@ -1,0 +1,4994 @@
+import type { FormEvent, ReactNode } from "react";
+import { useEffect, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
+import {
+  AlertCircle,
+  Bell,
+  BookOpen,
+  Calendar,
+  CheckSquare,
+  ClipboardList,
+  Download,
+  GraduationCap,
+  Home,
+  Layers,
+  LogOut,
+  Mail,
+  Megaphone,
+  Plus,
+  RefreshCw,
+  Send,
+  Settings,
+  Shield,
+  UserPlus,
+  Users,
+} from "lucide-react";
+import { hasSupabaseEnv, supabase, supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
+
+type UserRole = "super_admin" | "school_admin" | "teacher" | "student" | "parent";
+
+type BasicProfile = {
+  id: string;
+  email: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  phone: string | null;
+  avatar_url?: string | null;
+};
+
+type PlatformProfile = BasicProfile & {
+  is_active: boolean;
+  created_at: string;
+};
+
+type SchoolRecord = {
+  id: string;
+  name: string;
+  slug: string;
+  timezone: string;
+  is_active: boolean;
+  settings?: Record<string, unknown> | null;
+  created_at?: string | null;
+};
+
+type Workspace = {
+  key: string;
+  role: UserRole;
+  schoolId: string | null;
+  schoolName: string;
+  school: SchoolRecord | null;
+};
+
+type RoleRow = {
+  id: string;
+  user_id: string;
+  school_id: string | null;
+  role: UserRole;
+  is_active: boolean;
+  created_at?: string;
+};
+
+type Plan = {
+  id: string;
+  name: string;
+  max_students: number | null;
+  max_teachers: number | null;
+  price_cents: number;
+  billing_cycle: string;
+  features: Record<string, unknown> | null;
+  is_active: boolean;
+};
+
+type SchoolSubscription = {
+  id: string;
+  school_id: string;
+  plan_id: string;
+  status: string;
+  starts_at: string;
+  ends_at: string | null;
+  created_at: string;
+};
+
+type PlatformSetting = {
+  key: string;
+  value: Record<string, unknown> | string | number | boolean | null;
+};
+
+type AuditLogRecord = {
+  id: string;
+  school_id: string | null;
+  actor_id: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+};
+
+type PlatformCounts = {
+  profiles: number;
+  role_assignments: number;
+  schools: number;
+  subscriptions: number;
+  classes: number;
+  subjects: number;
+  lessons: number;
+  announcements: number;
+  messages: number;
+};
+
+type AcademicYear = {
+  id: string;
+  school_id: string;
+  name: string;
+  start_date: string;
+  end_date: string;
+  is_current: boolean;
+};
+
+type WorkingDay = {
+  id: string;
+  school_id: string;
+  day_of_week: number;
+  label: string;
+};
+
+type TimeSlot = {
+  id: string;
+  school_id: string;
+  label: string;
+  start_time: string;
+  end_time: string;
+  sort_order: number;
+};
+
+type GradeLevel = {
+  id: string;
+  school_id: string;
+  name: string;
+  sort_order: number;
+};
+
+type ClassRecord = {
+  id: string;
+  school_id: string;
+  academic_year_id: string;
+  grade_level_id: string;
+  name: string;
+  created_at?: string;
+};
+
+type SubjectRecord = {
+  id: string;
+  school_id: string;
+  name: string;
+  code: string | null;
+};
+
+type TeacherAssignment = {
+  id: string;
+  school_id: string;
+  teacher_id: string;
+  subject_id: string;
+  class_id: string | null;
+};
+
+type ClassEnrollment = {
+  id: string;
+  school_id: string;
+  class_id: string;
+  student_id: string;
+  status: string;
+  enrolled_at?: string;
+};
+
+type ParentStudentLink = {
+  id: string;
+  school_id: string;
+  parent_id: string;
+  student_id: string;
+  relationship: string;
+};
+
+type Lesson = {
+  id: string;
+  school_id: string;
+  class_id: string;
+  subject_id: string;
+  teacher_id: string;
+  title: string;
+  description: string | null;
+  video_url: string | null;
+  lesson_date: string;
+  created_at: string;
+};
+
+type Homework = {
+  id: string;
+  school_id: string;
+  lesson_id: string;
+  title: string;
+  due_date: string;
+  created_at: string;
+};
+
+type HomeworkQuestion = {
+  id: string;
+  homework_id: string;
+  question_text: string;
+  sort_order: number;
+};
+
+type HomeworkChoice = {
+  id: string;
+  question_id: string;
+  choice_text: string;
+  is_correct: boolean;
+  sort_order: number;
+};
+
+type HomeworkSubmission = {
+  id: string;
+  homework_id: string;
+  student_id: string;
+  submitted_at: string;
+  score: number | null;
+  graded_at: string | null;
+};
+
+type HomeworkAnswer = {
+  id: string;
+  submission_id: string;
+  question_id: string;
+  selected_choice_id: string | null;
+  is_correct: boolean | null;
+};
+
+type MonthlyTest = {
+  id: string;
+  school_id: string;
+  class_id: string;
+  subject_id: string;
+  teacher_id: string;
+  title: string;
+  test_date: string;
+  duration_minutes: number;
+  kind: string;
+  created_at: string;
+};
+
+type TestQuestion = {
+  id: string;
+  test_id: string;
+  question_text: string;
+  sort_order: number;
+};
+
+type TestChoice = {
+  id: string;
+  question_id: string;
+  choice_text: string;
+  is_correct: boolean;
+  sort_order: number;
+};
+
+type TestSubmission = {
+  id: string;
+  test_id: string;
+  student_id: string;
+  submitted_at: string;
+  score: number | null;
+  graded_at: string | null;
+};
+
+type TestAnswer = {
+  id: string;
+  submission_id: string;
+  question_id: string;
+  selected_choice_id: string | null;
+  is_correct: boolean | null;
+};
+
+type FinalGrade = {
+  id: string;
+  school_id: string;
+  academic_year_id: string;
+  class_id: string;
+  subject_id: string;
+  student_id: string;
+  grade_value: number | null;
+  grade_letter: string | null;
+  remarks: string | null;
+  status: string;
+};
+
+type Announcement = {
+  id: string;
+  school_id: string;
+  author_id: string;
+  title: string;
+  body: string;
+  is_published: boolean;
+  published_at: string | null;
+  created_at: string;
+};
+
+type AnnouncementTarget = {
+  id: string;
+  announcement_id: string;
+  target_type: string;
+  target_id: string | null;
+  target_role: string | null;
+};
+
+type Message = {
+  id: string;
+  school_id: string;
+  sender_id: string;
+  subject: string | null;
+  body: string;
+  created_at: string;
+};
+
+type MessageRecipient = {
+  id: string;
+  message_id: string;
+  recipient_id: string;
+  is_read: boolean;
+  read_at: string | null;
+};
+
+type TimetableEntry = {
+  id: string;
+  school_id: string;
+  academic_year_id: string;
+  working_day_id: string;
+  time_slot_id: string;
+  class_id: string;
+  subject_id: string;
+  teacher_id: string;
+};
+
+type AttendanceRecord = {
+  id: string;
+  school_id: string;
+  lesson_id: string;
+  student_id: string;
+  status: string;
+  recorded_at: string;
+};
+
+type NotificationRow = {
+  id: string;
+  title: string | null;
+  body: string | null;
+  status: string;
+  created_at: string;
+};
+
+type SchoolUsageStat = {
+  school_id: string;
+  school_name: string;
+  is_active: boolean;
+  student_count: number;
+  teacher_count: number;
+  parent_count: number;
+  class_count: number;
+  subscription_status: string | null;
+  last_activity_at: string | null;
+};
+
+type RecipientOption = {
+  id: string;
+  label: string;
+  email: string | null;
+};
+
+type HomeworkBundle = {
+  item: Homework;
+  lesson?: Lesson;
+  questions: Array<HomeworkQuestion & { choices: HomeworkChoice[] }>;
+  submissions: HomeworkSubmission[];
+  answers: HomeworkAnswer[];
+};
+
+type TestBundle = {
+  item: MonthlyTest;
+  questions: Array<TestQuestion & { choices: TestChoice[] }>;
+  submissions: TestSubmission[];
+  answers: TestAnswer[];
+};
+
+type MessageBundle = {
+  item: Message;
+  senderName: string;
+  recipients: RecipientOption[];
+};
+
+type AnnouncementBundle = {
+  item: Announcement;
+  authorName: string;
+  audience: string;
+};
+
+type SchoolAdminTeacher = {
+  userId: string;
+  name: string;
+  email: string | null;
+  assignments: string[];
+};
+
+type SchoolAdminStudent = {
+  userId: string;
+  name: string;
+  email: string | null;
+  className: string;
+  status: string;
+  parents: string[];
+};
+
+type StudentSummary = {
+  userId: string;
+  name: string;
+  email: string | null;
+  className: string;
+};
+
+type ChildSummary = {
+  userId: string;
+  name: string;
+  className: string;
+};
+
+type NavItem = {
+  id: string;
+  label: string;
+  icon: ReactNode;
+};
+
+type SuperAdminData = {
+  role: "super_admin";
+  plans: Plan[];
+  schools: SchoolRecord[];
+  subscriptions: SchoolSubscription[];
+  settings: PlatformSetting[];
+  stats: SchoolUsageStat[];
+  profiles: PlatformProfile[];
+  roleRows: RoleRow[];
+  auditLogs: AuditLogRecord[];
+  counts: PlatformCounts;
+};
+
+type SchoolAdminData = {
+  role: "school_admin";
+  school: SchoolRecord;
+  subscription: SchoolSubscription | null;
+  usageStat: SchoolUsageStat | null;
+  academicYears: AcademicYear[];
+  workingDays: WorkingDay[];
+  timeSlots: TimeSlot[];
+  gradeLevels: GradeLevel[];
+  classes: ClassRecord[];
+  subjects: SubjectRecord[];
+  teachers: SchoolAdminTeacher[];
+  students: SchoolAdminStudent[];
+  recipientOptions: RecipientOption[];
+  announcements: AnnouncementBundle[];
+  timetable: TimetableEntry[];
+  messages: MessageBundle[];
+};
+
+type TeacherData = {
+  role: "teacher";
+  school: SchoolRecord;
+  assignments: TeacherAssignment[];
+  classes: ClassRecord[];
+  subjects: SubjectRecord[];
+  students: StudentSummary[];
+  lessons: Lesson[];
+  homework: HomeworkBundle[];
+  tests: TestBundle[];
+  timetable: TimetableEntry[];
+  announcements: AnnouncementBundle[];
+  messages: MessageBundle[];
+  recipientOptions: RecipientOption[];
+  grades: FinalGrade[];
+};
+
+type StudentData = {
+  role: "student";
+  school: SchoolRecord;
+  enrollments: ClassEnrollment[];
+  classes: ClassRecord[];
+  subjects: SubjectRecord[];
+  lessons: Lesson[];
+  homework: HomeworkBundle[];
+  tests: TestBundle[];
+  grades: FinalGrade[];
+  attendance: AttendanceRecord[];
+  timetable: TimetableEntry[];
+  announcements: AnnouncementBundle[];
+  messages: MessageBundle[];
+  recipientOptions: RecipientOption[];
+  notifications: NotificationRow[];
+};
+
+type ParentData = {
+  role: "parent";
+  school: SchoolRecord;
+  children: ChildSummary[];
+  enrollments: ClassEnrollment[];
+  classes: ClassRecord[];
+  subjects: SubjectRecord[];
+  lessons: Lesson[];
+  homework: HomeworkBundle[];
+  tests: TestBundle[];
+  grades: FinalGrade[];
+  attendance: AttendanceRecord[];
+  timetable: TimetableEntry[];
+  announcements: AnnouncementBundle[];
+  messages: MessageBundle[];
+  recipientOptions: RecipientOption[];
+};
+
+type LoadedWorkspaceData =
+  | SuperAdminData
+  | SchoolAdminData
+  | TeacherData
+  | StudentData
+  | ParentData;
+
+type FlashState = {
+  kind: "success" | "error" | "info";
+  message: string;
+} | null;
+
+const ROLE_LABELS: Record<UserRole, string> = {
+  super_admin: "Super Admin",
+  school_admin: "School Admin",
+  teacher: "Teacher",
+  student: "Student",
+  parent: "Parent",
+};
+
+const NAV_BY_ROLE: Record<UserRole, NavItem[]> = {
+  super_admin: [
+    { id: "dashboard", label: "Overview", icon: <Shield className="w-4 h-4" /> },
+    { id: "schools", label: "Schools", icon: <GraduationCap className="w-4 h-4" /> },
+    { id: "people", label: "People", icon: <Users className="w-4 h-4" /> },
+    { id: "access", label: "Access", icon: <UserPlus className="w-4 h-4" /> },
+    { id: "billing", label: "Plans", icon: <Layers className="w-4 h-4" /> },
+    { id: "audit", label: "Audit", icon: <ClipboardList className="w-4 h-4" /> },
+    { id: "settings", label: "Settings", icon: <Settings className="w-4 h-4" /> },
+  ],
+  school_admin: [
+    { id: "dashboard", label: "Overview", icon: <Home className="w-4 h-4" /> },
+    { id: "academic", label: "Academic", icon: <Layers className="w-4 h-4" /> },
+    { id: "teachers", label: "Teachers", icon: <Users className="w-4 h-4" /> },
+    { id: "students", label: "Students", icon: <GraduationCap className="w-4 h-4" /> },
+    { id: "timetable", label: "Timetable", icon: <Calendar className="w-4 h-4" /> },
+    { id: "announcements", label: "Announcements", icon: <Megaphone className="w-4 h-4" /> },
+    { id: "messages", label: "Messages", icon: <Mail className="w-4 h-4" /> },
+  ],
+  teacher: [
+    { id: "dashboard", label: "Overview", icon: <Home className="w-4 h-4" /> },
+    { id: "lessons", label: "Lessons", icon: <BookOpen className="w-4 h-4" /> },
+    { id: "homework", label: "Homework", icon: <ClipboardList className="w-4 h-4" /> },
+    { id: "tests", label: "Tests", icon: <CheckSquare className="w-4 h-4" /> },
+    { id: "students", label: "Students", icon: <Users className="w-4 h-4" /> },
+    { id: "timetable", label: "Timetable", icon: <Calendar className="w-4 h-4" /> },
+    { id: "announcements", label: "Announcements", icon: <Megaphone className="w-4 h-4" /> },
+    { id: "messages", label: "Messages", icon: <Mail className="w-4 h-4" /> },
+  ],
+  student: [
+    { id: "dashboard", label: "Overview", icon: <Home className="w-4 h-4" /> },
+    { id: "lessons", label: "Lessons", icon: <BookOpen className="w-4 h-4" /> },
+    { id: "homework", label: "Homework", icon: <ClipboardList className="w-4 h-4" /> },
+    { id: "tests", label: "Tests", icon: <CheckSquare className="w-4 h-4" /> },
+    { id: "grades", label: "Grades", icon: <GraduationCap className="w-4 h-4" /> },
+    { id: "attendance", label: "Attendance", icon: <Calendar className="w-4 h-4" /> },
+    { id: "timetable", label: "Timetable", icon: <Calendar className="w-4 h-4" /> },
+    { id: "announcements", label: "Announcements", icon: <Megaphone className="w-4 h-4" /> },
+    { id: "messages", label: "Messages", icon: <Mail className="w-4 h-4" /> },
+  ],
+  parent: [
+    { id: "dashboard", label: "Overview", icon: <Home className="w-4 h-4" /> },
+    { id: "children", label: "Children", icon: <Users className="w-4 h-4" /> },
+    { id: "homework", label: "Homework", icon: <ClipboardList className="w-4 h-4" /> },
+    { id: "tests", label: "Tests", icon: <CheckSquare className="w-4 h-4" /> },
+    { id: "grades", label: "Grades", icon: <GraduationCap className="w-4 h-4" /> },
+    { id: "attendance", label: "Attendance", icon: <Calendar className="w-4 h-4" /> },
+    { id: "timetable", label: "Timetable", icon: <Calendar className="w-4 h-4" /> },
+    { id: "announcements", label: "Announcements", icon: <Megaphone className="w-4 h-4" /> },
+    { id: "messages", label: "Messages", icon: <Mail className="w-4 h-4" /> },
+  ],
+};
+
+function unwrap<T>(result: { data: T; error: { message: string } | null }): T {
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+  return result.data;
+}
+
+function unique<T>(values: T[]): T[] {
+  return Array.from(new Set(values));
+}
+
+function byId<T extends { id: string }>(rows: T[]) {
+  return rows.reduce<Record<string, T>>((acc, row) => {
+    acc[row.id] = row;
+    return acc;
+  }, {});
+}
+
+async function fetchExactCount(table: string) {
+  const result = await supabase.from(table).select("id", { count: "exact", head: true });
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+  return result.count ?? 0;
+}
+
+function fullName(profile?: Partial<BasicProfile> | null) {
+  if (!profile) return "Unknown";
+  const name = [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
+  return name || profile.email || "Unknown";
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function currencyFromCents(amount: number) {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(amount / 100);
+}
+
+function roleRank(role: UserRole) {
+  return {
+    super_admin: 0,
+    school_admin: 1,
+    teacher: 2,
+    student: 3,
+    parent: 4,
+  }[role];
+}
+
+function dayLabel(day: number) {
+  return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][day] ?? `Day ${day}`;
+}
+
+function parseName(value: string) {
+  const trimmed = value.trim();
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  return {
+    first_name: parts[0] ?? "",
+    last_name: parts.slice(1).join(" "),
+  };
+}
+
+function targetSummary(
+  target: AnnouncementTarget | undefined,
+  classMap: Record<string, ClassRecord>,
+): string {
+  if (!target) return "Published";
+  if (target.target_type === "school") return "Whole school";
+  if (target.target_type === "role") return `All ${target.target_role?.replace("_", " ") ?? "members"}`;
+  if (target.target_type === "class" && target.target_id) {
+    return classMap[target.target_id]?.name ? `Class ${classMap[target.target_id].name}` : "Class group";
+  }
+  if (target.target_type === "grade_level") return "Grade level";
+  return "Published";
+}
+
+async function fetchProfilesByIds(ids: string[]) {
+  if (ids.length === 0) return [] as BasicProfile[];
+  return unwrap(
+    await supabase
+      .from("profiles")
+      .select("id,email,first_name,last_name,phone,avatar_url")
+      .in("id", unique(ids)),
+  ) as BasicProfile[];
+}
+
+async function getAuthHeaders() {
+  const sessionResult = await supabase.auth.getSession();
+  const accessToken = sessionResult.data.session?.access_token;
+  return accessToken
+    ? {
+        Authorization: `Bearer ${accessToken}`,
+      }
+    : {};
+}
+
+async function invokeFunctionJson<T>(name: string, body: Record<string, unknown>) {
+  const headers = await getAuthHeaders();
+  const { data, error } = await supabase.functions.invoke(name, {
+    body,
+    headers,
+  });
+  if (error) {
+    throw new Error(error.message);
+  }
+  return data as T;
+}
+
+async function bootstrapSuperAdminRole(firstName?: string | null, lastName?: string | null) {
+  return invokeFunctionJson<{ status: string; role: string; user_id: string }>("bootstrap-super-admin", {
+    first_name: firstName ?? undefined,
+    last_name: lastName ?? undefined,
+  });
+}
+
+async function downloadExport(entity: string, schoolId: string, academicYearId?: string) {
+  const headers = await getAuthHeaders();
+  const response = await fetch(`${supabaseUrl}/functions/v1/export-data`, {
+    method: "POST",
+    headers: {
+      apikey: supabaseAnonKey,
+      Authorization: (headers.Authorization as string | undefined) ?? "",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      school_id: schoolId,
+      entity,
+      academic_year_id: academicYearId,
+    }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "Export failed");
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${entity}-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+async function loadMemberships(user: Session["user"]) {
+  const [profile, roles] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("id,email,first_name,last_name,phone,avatar_url")
+      .eq("id", user.id)
+      .maybeSingle(),
+    supabase
+      .from("user_school_roles")
+      .select("id,user_id,school_id,role,is_active")
+      .eq("user_id", user.id)
+      .eq("is_active", true),
+  ]);
+
+  const roleRows = unwrap(roles) as RoleRow[];
+  const schoolIds = unique(roleRows.map((row) => row.school_id).filter(Boolean) as string[]);
+  const schools = schoolIds.length
+    ? ((unwrap(
+        await supabase
+          .from("schools")
+          .select("id,name,slug,timezone,is_active,settings,created_at")
+          .in("id", schoolIds),
+      ) as unknown) as SchoolRecord[])
+    : [];
+  const schoolMap = byId(schools);
+
+  const currentProfile: BasicProfile = profile.data
+    ? (profile.data as BasicProfile)
+    : {
+        id: user.id,
+        email: user.email ?? null,
+        first_name: (user.user_metadata?.first_name as string | undefined) ?? null,
+        last_name: (user.user_metadata?.last_name as string | undefined) ?? null,
+        phone: null,
+      };
+
+  const workspaces = roleRows
+    .map<Workspace>((row) => ({
+      key: `${row.school_id ?? "platform"}:${row.role}`,
+      role: row.role,
+      schoolId: row.school_id,
+      schoolName: row.school_id ? schoolMap[row.school_id]?.name ?? "Unknown school" : "Platform",
+      school: row.school_id ? schoolMap[row.school_id] ?? null : null,
+    }))
+    .sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.schoolName.localeCompare(b.schoolName));
+
+  return { profile: currentProfile, workspaces };
+}
+
+async function loadMessagesForSchool(schoolId: string) {
+  const messages = (unwrap(
+    await supabase
+      .from("messages")
+      .select("id,school_id,sender_id,subject,body,created_at")
+      .eq("school_id", schoolId)
+      .order("created_at", { ascending: false })
+      .limit(40),
+  ) as unknown) as Message[];
+  const messageIds = messages.map((item) => item.id);
+  const recipients = messageIds.length
+    ? ((unwrap(
+        await supabase
+          .from("message_recipients")
+          .select("id,message_id,recipient_id,is_read,read_at")
+          .in("message_id", messageIds),
+      ) as unknown) as MessageRecipient[])
+    : [];
+  return { messages, recipients };
+}
+
+async function loadAnnouncementsForSchool(schoolId: string) {
+  const announcements = (unwrap(
+    await supabase
+      .from("announcements")
+      .select("id,school_id,author_id,title,body,is_published,published_at,created_at")
+      .eq("school_id", schoolId)
+      .order("created_at", { ascending: false })
+      .limit(40),
+  ) as unknown) as Announcement[];
+  const announcementIds = announcements.map((item) => item.id);
+  const targets = announcementIds.length
+    ? ((unwrap(
+        await supabase
+          .from("announcement_targets")
+          .select("id,announcement_id,target_type,target_id,target_role")
+          .in("announcement_id", announcementIds),
+      ) as unknown) as AnnouncementTarget[])
+    : [];
+  return { announcements, targets };
+}
+
+function bundleMessages(
+  messages: Message[],
+  recipients: MessageRecipient[],
+  profiles: Record<string, BasicProfile>,
+) {
+  return messages.map<MessageBundle>((item) => ({
+    item,
+    senderName: fullName(profiles[item.sender_id]),
+    recipients: recipients
+      .filter((recipient) => recipient.message_id === item.id)
+      .map((recipient) => ({
+        id: recipient.recipient_id,
+        label: fullName(profiles[recipient.recipient_id]),
+        email: profiles[recipient.recipient_id]?.email ?? null,
+      })),
+  }));
+}
+
+function bundleAnnouncements(
+  announcements: Announcement[],
+  targets: AnnouncementTarget[],
+  profiles: Record<string, BasicProfile>,
+  classMap: Record<string, ClassRecord>,
+) {
+  return announcements.map<AnnouncementBundle>((item) => ({
+    item,
+    authorName: fullName(profiles[item.author_id]),
+    audience: targetSummary(targets.find((target) => target.announcement_id === item.id), classMap),
+  }));
+}
+
+function bundleHomework(
+  homework: Homework[],
+  lessons: Lesson[],
+  questions: HomeworkQuestion[],
+  choices: HomeworkChoice[],
+  submissions: HomeworkSubmission[],
+  answers: HomeworkAnswer[],
+) {
+  const lessonMap = byId(lessons);
+  return homework.map<HomeworkBundle>((item) => ({
+    item,
+    lesson: lessonMap[item.lesson_id],
+    questions: questions
+      .filter((question) => question.homework_id === item.id)
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((question) => ({
+        ...question,
+        choices: choices
+          .filter((choice) => choice.question_id === question.id)
+          .sort((a, b) => a.sort_order - b.sort_order),
+      })),
+    submissions: submissions.filter((submission) => submission.homework_id === item.id),
+    answers,
+  }));
+}
+
+function bundleTests(
+  tests: MonthlyTest[],
+  questions: TestQuestion[],
+  choices: TestChoice[],
+  submissions: TestSubmission[],
+  answers: TestAnswer[],
+) {
+  return tests.map<TestBundle>((item) => ({
+    item,
+    questions: questions
+      .filter((question) => question.test_id === item.id)
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((question) => ({
+        ...question,
+        choices: choices
+          .filter((choice) => choice.question_id === question.id)
+          .sort((a, b) => a.sort_order - b.sort_order),
+      })),
+    submissions: submissions.filter((submission) => submission.test_id === item.id),
+    answers,
+  }));
+}
+
+async function loadSuperAdminData() {
+  const [
+    stats,
+    schools,
+    plans,
+    subscriptions,
+    settings,
+    profiles,
+    roleRows,
+    auditLogs,
+    classCount,
+    subjectCount,
+    lessonCount,
+    announcementCount,
+    messageCount,
+  ] = await Promise.all([
+    supabase.rpc("get_school_usage_stats"),
+    supabase
+      .from("schools")
+      .select("id,name,slug,timezone,is_active,settings,created_at")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("subscription_plans")
+      .select("id,name,max_students,max_teachers,price_cents,billing_cycle,features,is_active")
+      .order("price_cents", { ascending: true }),
+    supabase
+      .from("school_subscriptions")
+      .select("id,school_id,plan_id,status,starts_at,ends_at,created_at")
+      .order("created_at", { ascending: false }),
+    supabase.from("platform_settings").select("key,value").order("key"),
+    supabase
+      .from("profiles")
+      .select("id,email,first_name,last_name,phone,avatar_url,is_active,created_at")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("user_school_roles")
+      .select("id,user_id,school_id,role,is_active,created_at")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("audit_logs")
+      .select("id,school_id,actor_id,action,entity_type,entity_id,metadata,created_at")
+      .order("created_at", { ascending: false })
+      .limit(120),
+    fetchExactCount("classes"),
+    fetchExactCount("subjects"),
+    fetchExactCount("lessons"),
+    fetchExactCount("announcements"),
+    fetchExactCount("messages"),
+  ]);
+
+  const statsRows = (unwrap(stats) as unknown) as SchoolUsageStat[];
+  const schoolRows = (unwrap(schools) as unknown) as SchoolRecord[];
+  const planRows = (unwrap(plans) as unknown) as Plan[];
+  const subscriptionRows = (unwrap(subscriptions) as unknown) as SchoolSubscription[];
+  const settingRows = (unwrap(settings) as unknown) as PlatformSetting[];
+  const profileRows = (unwrap(profiles) as unknown) as PlatformProfile[];
+  const roleRowsData = (unwrap(roleRows) as unknown) as RoleRow[];
+  const auditRows = (unwrap(auditLogs) as unknown) as AuditLogRecord[];
+
+  return {
+    role: "super_admin",
+    stats: statsRows,
+    schools: schoolRows,
+    plans: planRows,
+    subscriptions: subscriptionRows,
+    settings: settingRows,
+    profiles: profileRows,
+    roleRows: roleRowsData,
+    auditLogs: auditRows,
+    counts: {
+      profiles: profileRows.length,
+      role_assignments: roleRowsData.length,
+      schools: schoolRows.length,
+      subscriptions: subscriptionRows.length,
+      classes: classCount,
+      subjects: subjectCount,
+      lessons: lessonCount,
+      announcements: announcementCount,
+      messages: messageCount,
+    },
+  } satisfies SuperAdminData;
+}
+
+async function loadSchoolAdminData(schoolId: string, currentUserId: string) {
+  const [
+    school,
+    subscriptions,
+    usageStats,
+    academicYears,
+    workingDays,
+    timeSlots,
+    gradeLevels,
+    classes,
+    subjects,
+    roleRows,
+    assignments,
+    enrollments,
+    parentLinks,
+    timetable,
+  ] = await Promise.all([
+    supabase
+      .from("schools")
+      .select("id,name,slug,timezone,is_active,settings,created_at")
+      .eq("id", schoolId)
+      .single(),
+    supabase
+      .from("school_subscriptions")
+      .select("id,school_id,plan_id,status,starts_at,ends_at,created_at")
+      .eq("school_id", schoolId)
+      .order("created_at", { ascending: false })
+      .limit(1),
+    supabase.rpc("get_school_usage_stats", { p_school_id: schoolId }),
+    supabase
+      .from("academic_years")
+      .select("id,school_id,name,start_date,end_date,is_current")
+      .eq("school_id", schoolId)
+      .order("start_date", { ascending: false }),
+    supabase
+      .from("working_days")
+      .select("id,school_id,day_of_week,label")
+      .eq("school_id", schoolId)
+      .order("day_of_week", { ascending: true }),
+    supabase
+      .from("time_slots")
+      .select("id,school_id,label,start_time,end_time,sort_order")
+      .eq("school_id", schoolId)
+      .order("sort_order", { ascending: true }),
+    supabase
+      .from("grade_levels")
+      .select("id,school_id,name,sort_order")
+      .eq("school_id", schoolId)
+      .order("sort_order", { ascending: true }),
+    supabase
+      .from("classes")
+      .select("id,school_id,academic_year_id,grade_level_id,name,created_at")
+      .eq("school_id", schoolId)
+      .order("name", { ascending: true }),
+    supabase
+      .from("subjects")
+      .select("id,school_id,name,code")
+      .eq("school_id", schoolId)
+      .order("name", { ascending: true }),
+    supabase
+      .from("user_school_roles")
+      .select("id,user_id,school_id,role,is_active")
+      .eq("school_id", schoolId)
+      .eq("is_active", true),
+    supabase
+      .from("teacher_subject_assignments")
+      .select("id,school_id,teacher_id,subject_id,class_id")
+      .eq("school_id", schoolId),
+    supabase
+      .from("class_enrollments")
+      .select("id,school_id,class_id,student_id,status,enrolled_at")
+      .eq("school_id", schoolId),
+    supabase
+      .from("parent_student_links")
+      .select("id,school_id,parent_id,student_id,relationship")
+      .eq("school_id", schoolId),
+    supabase
+      .from("timetable_entries")
+      .select("id,school_id,academic_year_id,working_day_id,time_slot_id,class_id,subject_id,teacher_id")
+      .eq("school_id", schoolId),
+  ]);
+
+  const { messages, recipients } = await loadMessagesForSchool(schoolId);
+  const { announcements, targets } = await loadAnnouncementsForSchool(schoolId);
+
+  const roleData = (unwrap(roleRows) as unknown) as RoleRow[];
+  const profiles = await fetchProfilesByIds(roleData.map((row) => row.user_id));
+  const profileMap = byId(profiles);
+  const classRows = (unwrap(classes) as unknown) as ClassRecord[];
+  const classMap = byId(classRows);
+  const subjectRows = (unwrap(subjects) as unknown) as SubjectRecord[];
+  const subjectMap = byId(subjectRows);
+
+  const rolesByUser = roleData.reduce<Record<string, UserRole[]>>((acc, row) => {
+    acc[row.user_id] = acc[row.user_id] ? [...acc[row.user_id], row.role] : [row.role];
+    return acc;
+  }, {});
+
+  const parentNamesByStudent = ((unwrap(parentLinks) as unknown) as ParentStudentLink[]).reduce<Record<string, string[]>>(
+    (acc, row) => {
+      const list = acc[row.student_id] ?? [];
+      const parentName = fullName(profileMap[row.parent_id]);
+      acc[row.student_id] = parentName ? [...list, parentName] : list;
+      return acc;
+    },
+    {},
+  );
+
+  const teacherAssignments = ((unwrap(assignments) as unknown) as TeacherAssignment[]).reduce<Record<string, string[]>>(
+    (acc, row) => {
+      const subjectName = subjectMap[row.subject_id]?.name ?? "Unknown subject";
+      const className = row.class_id ? classMap[row.class_id]?.name ?? "Unknown class" : "All classes";
+      const label = `${subjectName} · ${className}`;
+      acc[row.teacher_id] = acc[row.teacher_id] ? [...acc[row.teacher_id], label] : [label];
+      return acc;
+    },
+    {},
+  );
+
+  const teachers = unique(roleData.filter((row) => row.role === "teacher").map((row) => row.user_id)).map<SchoolAdminTeacher>(
+    (teacherId) => ({
+      userId: teacherId,
+      name: fullName(profileMap[teacherId]),
+      email: profileMap[teacherId]?.email ?? null,
+      assignments: teacherAssignments[teacherId] ?? [],
+    }),
+  );
+
+  const students = unique(roleData.filter((row) => row.role === "student").map((row) => row.user_id)).map<SchoolAdminStudent>(
+    (studentId) => {
+      const enrollment = ((unwrap(enrollments) as unknown) as ClassEnrollment[]).find(
+        (row) => row.student_id === studentId,
+      );
+      return {
+        userId: studentId,
+        name: fullName(profileMap[studentId]),
+        email: profileMap[studentId]?.email ?? null,
+        className: enrollment ? classMap[enrollment.class_id]?.name ?? "Unknown class" : "Not enrolled",
+        status: enrollment?.status ?? "inactive",
+        parents: parentNamesByStudent[studentId] ?? [],
+      };
+    },
+  );
+
+  const recipientOptions = unique(roleData.map((row) => row.user_id))
+    .filter((userId) => userId !== currentUserId)
+    .map<RecipientOption>((userId) => ({
+      id: userId,
+      label: `${fullName(profileMap[userId])}${rolesByUser[userId]?.length ? ` · ${rolesByUser[userId].map((role) => ROLE_LABELS[role]).join(", ")}` : ""}`,
+      email: profileMap[userId]?.email ?? null,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  return {
+    role: "school_admin",
+    school: (unwrap(school) as unknown) as SchoolRecord,
+    subscription: (((unwrap(subscriptions) as unknown) as SchoolSubscription[]) ?? [])[0] ?? null,
+    usageStat: (((unwrap(usageStats) as unknown) as SchoolUsageStat[]) ?? [])[0] ?? null,
+    academicYears: (unwrap(academicYears) as unknown) as AcademicYear[],
+    workingDays: (unwrap(workingDays) as unknown) as WorkingDay[],
+    timeSlots: (unwrap(timeSlots) as unknown) as TimeSlot[],
+    gradeLevels: (unwrap(gradeLevels) as unknown) as GradeLevel[],
+    classes: classRows,
+    subjects: subjectRows,
+    teachers,
+    students,
+    recipientOptions,
+    announcements: bundleAnnouncements(announcements, targets, profileMap, classMap),
+    timetable: (unwrap(timetable) as unknown) as TimetableEntry[],
+    messages: bundleMessages(messages, recipients, profileMap),
+  } satisfies SchoolAdminData;
+}
+
+async function loadTeacherData(schoolId: string, currentUserId: string) {
+  const [
+    school,
+    assignments,
+    classes,
+    subjects,
+    enrollments,
+    lessons,
+    homework,
+    tests,
+    grades,
+    timetable,
+  ] = await Promise.all([
+    supabase
+      .from("schools")
+      .select("id,name,slug,timezone,is_active,settings,created_at")
+      .eq("id", schoolId)
+      .single(),
+    supabase
+      .from("teacher_subject_assignments")
+      .select("id,school_id,teacher_id,subject_id,class_id")
+      .eq("school_id", schoolId)
+      .eq("teacher_id", currentUserId),
+    supabase
+      .from("classes")
+      .select("id,school_id,academic_year_id,grade_level_id,name,created_at")
+      .eq("school_id", schoolId),
+    supabase.from("subjects").select("id,school_id,name,code").eq("school_id", schoolId),
+    supabase
+      .from("class_enrollments")
+      .select("id,school_id,class_id,student_id,status,enrolled_at")
+      .eq("school_id", schoolId),
+    supabase
+      .from("lessons")
+      .select("id,school_id,class_id,subject_id,teacher_id,title,description,video_url,lesson_date,created_at")
+      .eq("school_id", schoolId)
+      .eq("teacher_id", currentUserId)
+      .order("lesson_date", { ascending: false }),
+    supabase
+      .from("homework")
+      .select("id,school_id,lesson_id,title,due_date,created_at")
+      .eq("school_id", schoolId)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("monthly_tests")
+      .select("id,school_id,class_id,subject_id,teacher_id,title,test_date,duration_minutes,kind,created_at")
+      .eq("school_id", schoolId)
+      .eq("teacher_id", currentUserId)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("final_grades")
+      .select("id,school_id,academic_year_id,class_id,subject_id,student_id,grade_value,grade_letter,remarks,status")
+      .eq("school_id", schoolId),
+    supabase
+      .from("timetable_entries")
+      .select("id,school_id,academic_year_id,working_day_id,time_slot_id,class_id,subject_id,teacher_id")
+      .eq("school_id", schoolId)
+      .eq("teacher_id", currentUserId),
+  ]);
+
+  const { messages, recipients } = await loadMessagesForSchool(schoolId);
+  const { announcements, targets } = await loadAnnouncementsForSchool(schoolId);
+
+  const assignmentRows = (unwrap(assignments) as unknown) as TeacherAssignment[];
+  const lessonRows = (unwrap(lessons) as unknown) as Lesson[];
+  const homeworkRows = ((unwrap(homework) as unknown) as Homework[]).filter((item) =>
+    lessonRows.some((lesson) => lesson.id === item.lesson_id),
+  );
+  const homeworkIds = homeworkRows.map((item) => item.id);
+  const testRows = (unwrap(tests) as unknown) as MonthlyTest[];
+  const testIds = testRows.map((item) => item.id);
+  const assignedClassIds = unique(assignmentRows.map((row) => row.class_id).filter(Boolean) as string[]);
+
+  const [
+    homeworkQuestions,
+    homeworkChoices,
+    homeworkSubmissions,
+    homeworkAnswers,
+    testQuestions,
+    testChoices,
+    testSubmissions,
+    testAnswers,
+    teacherProfiles,
+  ] = await Promise.all([
+    homeworkIds.length
+      ? supabase
+          .from("homework_questions")
+          .select("id,homework_id,question_text,sort_order")
+          .in("homework_id", homeworkIds)
+      : Promise.resolve({ data: [] as HomeworkQuestion[], error: null }),
+    homeworkIds.length
+      ? supabase
+          .from("homework_choices")
+          .select("id,question_id,choice_text,is_correct,sort_order")
+          .in(
+            "question_id",
+            unique(
+              (((await (homeworkIds.length
+                ? supabase
+                    .from("homework_questions")
+                    .select("id,homework_id,question_text,sort_order")
+                    .in("homework_id", homeworkIds)
+                : Promise.resolve({ data: [] as HomeworkQuestion[], error: null }))) as unknown as {
+                data: HomeworkQuestion[];
+              }).data ?? []).map((question) => question.id),
+            ),
+          )
+      : Promise.resolve({ data: [] as HomeworkChoice[], error: null }),
+    homeworkIds.length
+      ? supabase
+          .from("homework_submissions")
+          .select("id,homework_id,student_id,submitted_at,score,graded_at")
+          .in("homework_id", homeworkIds)
+      : Promise.resolve({ data: [] as HomeworkSubmission[], error: null }),
+    homeworkIds.length
+      ? supabase
+          .from("homework_answers")
+          .select("id,submission_id,question_id,selected_choice_id,is_correct")
+          .in(
+            "submission_id",
+            unique(
+              (((await (homeworkIds.length
+                ? supabase
+                    .from("homework_submissions")
+                    .select("id,homework_id,student_id,submitted_at,score,graded_at")
+                    .in("homework_id", homeworkIds)
+                : Promise.resolve({ data: [] as HomeworkSubmission[], error: null }))) as unknown as {
+                data: HomeworkSubmission[];
+              }).data ?? []).map((submission) => submission.id),
+            ),
+          )
+      : Promise.resolve({ data: [] as HomeworkAnswer[], error: null }),
+    testIds.length
+      ? supabase.from("test_questions").select("id,test_id,question_text,sort_order").in("test_id", testIds)
+      : Promise.resolve({ data: [] as TestQuestion[], error: null }),
+    testIds.length
+      ? supabase
+          .from("test_choices")
+          .select("id,question_id,choice_text,is_correct,sort_order")
+          .in(
+            "question_id",
+            unique(
+              (((await (testIds.length
+                ? supabase.from("test_questions").select("id,test_id,question_text,sort_order").in("test_id", testIds)
+                : Promise.resolve({ data: [] as TestQuestion[], error: null }))) as unknown as {
+                data: TestQuestion[];
+              }).data ?? []).map((question) => question.id),
+            ),
+          )
+      : Promise.resolve({ data: [] as TestChoice[], error: null }),
+    testIds.length
+      ? supabase
+          .from("test_submissions")
+          .select("id,test_id,student_id,submitted_at,score,graded_at")
+          .in("test_id", testIds)
+      : Promise.resolve({ data: [] as TestSubmission[], error: null }),
+    testIds.length
+      ? supabase
+          .from("test_answers")
+          .select("id,submission_id,question_id,selected_choice_id,is_correct")
+          .in(
+            "submission_id",
+            unique(
+              (((await (testIds.length
+                ? supabase
+                    .from("test_submissions")
+                    .select("id,test_id,student_id,submitted_at,score,graded_at")
+                    .in("test_id", testIds)
+                : Promise.resolve({ data: [] as TestSubmission[], error: null }))) as unknown as {
+                data: TestSubmission[];
+              }).data ?? []).map((submission) => submission.id),
+            ),
+          )
+      : Promise.resolve({ data: [] as TestAnswer[], error: null }),
+    fetchProfilesByIds(
+      unique([
+        ...((unwrap(enrollments) as unknown) as ClassEnrollment[])
+          .filter((row) => assignedClassIds.includes(row.class_id))
+          .map((row) => row.student_id),
+        ...messages.map((message) => message.sender_id),
+        ...recipients.map((recipient) => recipient.recipient_id),
+        ...announcements.map((announcement) => announcement.author_id),
+        currentUserId,
+      ]),
+    ),
+  ]);
+
+  const profileMap = byId(teacherProfiles);
+  const classRows = (unwrap(classes) as unknown) as ClassRecord[];
+  const classMap = byId(classRows);
+  const subjectRows = (unwrap(subjects) as unknown) as SubjectRecord[];
+  const subjectMap = byId(subjectRows);
+  const homeworkBundles = bundleHomework(
+    homeworkRows,
+    lessonRows,
+    (unwrap(homeworkQuestions) as unknown) as HomeworkQuestion[],
+    (unwrap(homeworkChoices) as unknown) as HomeworkChoice[],
+    (unwrap(homeworkSubmissions) as unknown) as HomeworkSubmission[],
+    (unwrap(homeworkAnswers) as unknown) as HomeworkAnswer[],
+  );
+  const testBundles = bundleTests(
+    testRows,
+    (unwrap(testQuestions) as unknown) as TestQuestion[],
+    (unwrap(testChoices) as unknown) as TestChoice[],
+    (unwrap(testSubmissions) as unknown) as TestSubmission[],
+    (unwrap(testAnswers) as unknown) as TestAnswer[],
+  );
+
+  const studentRows = ((unwrap(enrollments) as unknown) as ClassEnrollment[])
+    .filter((row) => assignedClassIds.includes(row.class_id))
+    .map<StudentSummary>((row) => ({
+      userId: row.student_id,
+      name: fullName(profileMap[row.student_id]),
+      email: profileMap[row.student_id]?.email ?? null,
+      className: classMap[row.class_id]?.name ?? "Unknown class",
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const recipientOptions = unique([
+    ...studentRows.map((row) => row.userId),
+    ...assignmentRows.map((row) => row.teacher_id),
+  ])
+    .filter((id) => id !== currentUserId)
+    .map<RecipientOption>((id) => ({
+      id,
+      label: fullName(profileMap[id]),
+      email: profileMap[id]?.email ?? null,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  return {
+    role: "teacher",
+    school: (unwrap(school) as unknown) as SchoolRecord,
+    assignments: assignmentRows,
+    classes: classRows,
+    subjects: subjectRows,
+    students: studentRows,
+    lessons: lessonRows,
+    homework: homeworkBundles,
+    tests: testBundles,
+    timetable: (unwrap(timetable) as unknown) as TimetableEntry[],
+    announcements: bundleAnnouncements(announcements, targets, profileMap, classMap),
+    messages: bundleMessages(messages, recipients, profileMap),
+    recipientOptions,
+    grades: (unwrap(grades) as unknown) as FinalGrade[],
+  } satisfies TeacherData;
+}
+
+async function loadStudentData(schoolId: string, currentUserId: string) {
+  const [school, enrollments, classes, subjects, lessons, homework, tests, grades, attendance, timetable, notifications] =
+    await Promise.all([
+      supabase
+        .from("schools")
+        .select("id,name,slug,timezone,is_active,settings,created_at")
+        .eq("id", schoolId)
+        .single(),
+      supabase
+        .from("class_enrollments")
+        .select("id,school_id,class_id,student_id,status,enrolled_at")
+        .eq("school_id", schoolId)
+        .eq("student_id", currentUserId),
+      supabase
+        .from("classes")
+        .select("id,school_id,academic_year_id,grade_level_id,name,created_at")
+        .eq("school_id", schoolId),
+      supabase.from("subjects").select("id,school_id,name,code").eq("school_id", schoolId),
+      supabase
+        .from("lessons")
+        .select("id,school_id,class_id,subject_id,teacher_id,title,description,video_url,lesson_date,created_at")
+        .eq("school_id", schoolId)
+        .order("lesson_date", { ascending: false }),
+      supabase
+        .from("homework")
+        .select("id,school_id,lesson_id,title,due_date,created_at")
+        .eq("school_id", schoolId)
+        .order("due_date", { ascending: true }),
+      supabase
+        .from("monthly_tests")
+        .select("id,school_id,class_id,subject_id,teacher_id,title,test_date,duration_minutes,kind,created_at")
+        .eq("school_id", schoolId)
+        .order("test_date", { ascending: true }),
+      supabase
+        .from("final_grades")
+        .select("id,school_id,academic_year_id,class_id,subject_id,student_id,grade_value,grade_letter,remarks,status")
+        .eq("school_id", schoolId),
+      supabase
+        .from("attendance_records")
+        .select("id,school_id,lesson_id,student_id,status,recorded_at")
+        .eq("school_id", schoolId)
+        .eq("student_id", currentUserId)
+        .order("recorded_at", { ascending: false }),
+      supabase
+        .from("timetable_entries")
+        .select("id,school_id,academic_year_id,working_day_id,time_slot_id,class_id,subject_id,teacher_id")
+        .eq("school_id", schoolId),
+      supabase
+        .from("notifications")
+        .select("id,title,body,status,created_at")
+        .eq("recipient_id", currentUserId)
+        .order("created_at", { ascending: false })
+        .limit(20),
+    ]);
+
+  const { messages, recipients } = await loadMessagesForSchool(schoolId);
+  const { announcements, targets } = await loadAnnouncementsForSchool(schoolId);
+
+  const homeworkRows = (unwrap(homework) as unknown) as Homework[];
+  const testRows = (unwrap(tests) as unknown) as MonthlyTest[];
+  const homeworkIds = homeworkRows.map((item) => item.id);
+  const testIds = testRows.map((item) => item.id);
+
+  const [homeworkQuestions, homeworkChoices, homeworkSubmissions, homeworkAnswers, testQuestions, testChoices, testSubmissions, testAnswers, assignments] =
+    await Promise.all([
+      homeworkIds.length
+        ? supabase
+            .from("homework_questions")
+            .select("id,homework_id,question_text,sort_order")
+            .in("homework_id", homeworkIds)
+        : Promise.resolve({ data: [] as HomeworkQuestion[], error: null }),
+      homeworkIds.length
+        ? supabase
+            .from("homework_choices")
+            .select("id,question_id,choice_text,is_correct,sort_order")
+            .in(
+              "question_id",
+              unique(
+                (((await (homeworkIds.length
+                  ? supabase
+                      .from("homework_questions")
+                      .select("id,homework_id,question_text,sort_order")
+                      .in("homework_id", homeworkIds)
+                  : Promise.resolve({ data: [] as HomeworkQuestion[], error: null }))) as unknown as {
+                  data: HomeworkQuestion[];
+                }).data ?? []).map((question) => question.id),
+              ),
+            )
+        : Promise.resolve({ data: [] as HomeworkChoice[], error: null }),
+      homeworkIds.length
+        ? supabase
+            .from("homework_submissions")
+            .select("id,homework_id,student_id,submitted_at,score,graded_at")
+            .eq("student_id", currentUserId)
+            .in("homework_id", homeworkIds)
+        : Promise.resolve({ data: [] as HomeworkSubmission[], error: null }),
+      homeworkIds.length
+        ? supabase
+            .from("homework_answers")
+            .select("id,submission_id,question_id,selected_choice_id,is_correct")
+            .in(
+              "submission_id",
+              unique(
+                (((await (homeworkIds.length
+                  ? supabase
+                      .from("homework_submissions")
+                      .select("id,homework_id,student_id,submitted_at,score,graded_at")
+                      .eq("student_id", currentUserId)
+                      .in("homework_id", homeworkIds)
+                  : Promise.resolve({ data: [] as HomeworkSubmission[], error: null }))) as unknown as {
+                  data: HomeworkSubmission[];
+                }).data ?? []).map((submission) => submission.id),
+              ),
+            )
+        : Promise.resolve({ data: [] as HomeworkAnswer[], error: null }),
+      testIds.length
+        ? supabase.from("test_questions").select("id,test_id,question_text,sort_order").in("test_id", testIds)
+        : Promise.resolve({ data: [] as TestQuestion[], error: null }),
+      testIds.length
+        ? supabase
+            .from("test_choices")
+            .select("id,question_id,choice_text,is_correct,sort_order")
+            .in(
+              "question_id",
+              unique(
+                (((await (testIds.length
+                  ? supabase.from("test_questions").select("id,test_id,question_text,sort_order").in("test_id", testIds)
+                  : Promise.resolve({ data: [] as TestQuestion[], error: null }))) as unknown as {
+                  data: TestQuestion[];
+                }).data ?? []).map((question) => question.id),
+              ),
+            )
+        : Promise.resolve({ data: [] as TestChoice[], error: null }),
+      testIds.length
+        ? supabase
+            .from("test_submissions")
+            .select("id,test_id,student_id,submitted_at,score,graded_at")
+            .eq("student_id", currentUserId)
+            .in("test_id", testIds)
+        : Promise.resolve({ data: [] as TestSubmission[], error: null }),
+      testIds.length
+        ? supabase
+            .from("test_answers")
+            .select("id,submission_id,question_id,selected_choice_id,is_correct")
+            .in(
+              "submission_id",
+              unique(
+                (((await (testIds.length
+                  ? supabase
+                      .from("test_submissions")
+                      .select("id,test_id,student_id,submitted_at,score,graded_at")
+                      .eq("student_id", currentUserId)
+                      .in("test_id", testIds)
+                  : Promise.resolve({ data: [] as TestSubmission[], error: null }))) as unknown as {
+                  data: TestSubmission[];
+                }).data ?? []).map((submission) => submission.id),
+              ),
+            )
+        : Promise.resolve({ data: [] as TestAnswer[], error: null }),
+      supabase
+        .from("teacher_subject_assignments")
+        .select("id,school_id,teacher_id,subject_id,class_id")
+        .eq("school_id", schoolId),
+    ]);
+
+  const classRows = (unwrap(classes) as unknown) as ClassRecord[];
+  const classMap = byId(classRows);
+  const profileIds = unique([
+    ...messages.map((message) => message.sender_id),
+    ...recipients.map((recipient) => recipient.recipient_id),
+    ...announcements.map((announcement) => announcement.author_id),
+    ...(((unwrap(assignments) as unknown) as TeacherAssignment[]).map((row) => row.teacher_id)),
+    ...((unwrap(lessons) as unknown) as Lesson[]).map((row) => row.teacher_id),
+    currentUserId,
+  ]);
+  const profiles = await fetchProfilesByIds(profileIds);
+  const profileMap = byId(profiles);
+
+  return {
+    role: "student",
+    school: (unwrap(school) as unknown) as SchoolRecord,
+    enrollments: (unwrap(enrollments) as unknown) as ClassEnrollment[],
+    classes: classRows,
+    subjects: (unwrap(subjects) as unknown) as SubjectRecord[],
+    lessons: (unwrap(lessons) as unknown) as Lesson[],
+    homework: bundleHomework(
+      homeworkRows,
+      (unwrap(lessons) as unknown) as Lesson[],
+      (unwrap(homeworkQuestions) as unknown) as HomeworkQuestion[],
+      (unwrap(homeworkChoices) as unknown) as HomeworkChoice[],
+      (unwrap(homeworkSubmissions) as unknown) as HomeworkSubmission[],
+      (unwrap(homeworkAnswers) as unknown) as HomeworkAnswer[],
+    ),
+    tests: bundleTests(
+      testRows,
+      (unwrap(testQuestions) as unknown) as TestQuestion[],
+      (unwrap(testChoices) as unknown) as TestChoice[],
+      (unwrap(testSubmissions) as unknown) as TestSubmission[],
+      (unwrap(testAnswers) as unknown) as TestAnswer[],
+    ),
+    grades: (unwrap(grades) as unknown) as FinalGrade[],
+    attendance: (unwrap(attendance) as unknown) as AttendanceRecord[],
+    timetable: ((unwrap(timetable) as unknown) as TimetableEntry[]).filter((entry) =>
+      ((unwrap(enrollments) as unknown) as ClassEnrollment[]).some((enrollment) => enrollment.class_id === entry.class_id),
+    ),
+    announcements: bundleAnnouncements(announcements, targets, profileMap, classMap),
+    messages: bundleMessages(messages, recipients, profileMap),
+    recipientOptions: unique(
+      (((unwrap(assignments) as unknown) as TeacherAssignment[]).map((row) => row.teacher_id)),
+    ).map<RecipientOption>((teacherId) => ({
+      id: teacherId,
+      label: fullName(profileMap[teacherId]),
+      email: profileMap[teacherId]?.email ?? null,
+    })),
+    notifications: (unwrap(notifications) as unknown) as NotificationRow[],
+  } satisfies StudentData;
+}
+
+async function loadParentData(schoolId: string, currentUserId: string) {
+  const [school, links, enrollments, classes, subjects, lessons, homework, tests, grades, attendance, timetable, assignments] =
+    await Promise.all([
+      supabase
+        .from("schools")
+        .select("id,name,slug,timezone,is_active,settings,created_at")
+        .eq("id", schoolId)
+        .single(),
+      supabase
+        .from("parent_student_links")
+        .select("id,school_id,parent_id,student_id,relationship")
+        .eq("school_id", schoolId)
+        .eq("parent_id", currentUserId),
+      supabase
+        .from("class_enrollments")
+        .select("id,school_id,class_id,student_id,status,enrolled_at")
+        .eq("school_id", schoolId),
+      supabase
+        .from("classes")
+        .select("id,school_id,academic_year_id,grade_level_id,name,created_at")
+        .eq("school_id", schoolId),
+      supabase.from("subjects").select("id,school_id,name,code").eq("school_id", schoolId),
+      supabase
+        .from("lessons")
+        .select("id,school_id,class_id,subject_id,teacher_id,title,description,video_url,lesson_date,created_at")
+        .eq("school_id", schoolId)
+        .order("lesson_date", { ascending: false }),
+      supabase
+        .from("homework")
+        .select("id,school_id,lesson_id,title,due_date,created_at")
+        .eq("school_id", schoolId)
+        .order("due_date", { ascending: true }),
+      supabase
+        .from("monthly_tests")
+        .select("id,school_id,class_id,subject_id,teacher_id,title,test_date,duration_minutes,kind,created_at")
+        .eq("school_id", schoolId)
+        .order("test_date", { ascending: true }),
+      supabase
+        .from("final_grades")
+        .select("id,school_id,academic_year_id,class_id,subject_id,student_id,grade_value,grade_letter,remarks,status")
+        .eq("school_id", schoolId),
+      supabase
+        .from("attendance_records")
+        .select("id,school_id,lesson_id,student_id,status,recorded_at")
+        .eq("school_id", schoolId)
+        .order("recorded_at", { ascending: false }),
+      supabase
+        .from("timetable_entries")
+        .select("id,school_id,academic_year_id,working_day_id,time_slot_id,class_id,subject_id,teacher_id")
+        .eq("school_id", schoolId),
+      supabase
+        .from("teacher_subject_assignments")
+        .select("id,school_id,teacher_id,subject_id,class_id")
+        .eq("school_id", schoolId),
+    ]);
+
+  const { messages, recipients } = await loadMessagesForSchool(schoolId);
+  const { announcements, targets } = await loadAnnouncementsForSchool(schoolId);
+
+  const childIds = (((unwrap(links) as unknown) as ParentStudentLink[]) ?? []).map((link) => link.student_id);
+  const homeworkRows = (unwrap(homework) as unknown) as Homework[];
+  const homeworkIds = homeworkRows.map((item) => item.id);
+  const testRows = (unwrap(tests) as unknown) as MonthlyTest[];
+  const testIds = testRows.map((item) => item.id);
+
+  const [
+    homeworkQuestions,
+    homeworkChoices,
+    homeworkSubmissions,
+    homeworkAnswers,
+    testQuestions,
+    testChoices,
+    testSubmissions,
+    testAnswers,
+  ] = await Promise.all([
+    homeworkIds.length
+      ? supabase
+          .from("homework_questions")
+          .select("id,homework_id,question_text,sort_order")
+          .in("homework_id", homeworkIds)
+      : Promise.resolve({ data: [] as HomeworkQuestion[], error: null }),
+    homeworkIds.length
+      ? supabase
+          .from("homework_choices")
+          .select("id,question_id,choice_text,is_correct,sort_order")
+          .in(
+            "question_id",
+            unique(
+              (((await (homeworkIds.length
+                ? supabase
+                    .from("homework_questions")
+                    .select("id,homework_id,question_text,sort_order")
+                    .in("homework_id", homeworkIds)
+                : Promise.resolve({ data: [] as HomeworkQuestion[], error: null }))) as unknown as {
+                data: HomeworkQuestion[];
+              }).data ?? []).map((question) => question.id),
+            ),
+          )
+      : Promise.resolve({ data: [] as HomeworkChoice[], error: null }),
+    childIds.length && homeworkIds.length
+      ? supabase
+          .from("homework_submissions")
+          .select("id,homework_id,student_id,submitted_at,score,graded_at")
+          .in("student_id", childIds)
+          .in("homework_id", homeworkIds)
+      : Promise.resolve({ data: [] as HomeworkSubmission[], error: null }),
+    childIds.length && homeworkIds.length
+      ? supabase
+          .from("homework_answers")
+          .select("id,submission_id,question_id,selected_choice_id,is_correct")
+          .in(
+            "submission_id",
+            unique(
+              (((await (childIds.length && homeworkIds.length
+                ? supabase
+                    .from("homework_submissions")
+                    .select("id,homework_id,student_id,submitted_at,score,graded_at")
+                    .in("student_id", childIds)
+                    .in("homework_id", homeworkIds)
+                : Promise.resolve({ data: [] as HomeworkSubmission[], error: null }))) as unknown as {
+                data: HomeworkSubmission[];
+              }).data ?? []).map((submission) => submission.id),
+            ),
+          )
+      : Promise.resolve({ data: [] as HomeworkAnswer[], error: null }),
+    testIds.length
+      ? supabase.from("test_questions").select("id,test_id,question_text,sort_order").in("test_id", testIds)
+      : Promise.resolve({ data: [] as TestQuestion[], error: null }),
+    testIds.length
+      ? supabase
+          .from("test_choices")
+          .select("id,question_id,choice_text,is_correct,sort_order")
+          .in(
+            "question_id",
+            unique(
+              (((await (testIds.length
+                ? supabase.from("test_questions").select("id,test_id,question_text,sort_order").in("test_id", testIds)
+                : Promise.resolve({ data: [] as TestQuestion[], error: null }))) as unknown as {
+                data: TestQuestion[];
+              }).data ?? []).map((question) => question.id),
+            ),
+          )
+      : Promise.resolve({ data: [] as TestChoice[], error: null }),
+    childIds.length && testIds.length
+      ? supabase
+          .from("test_submissions")
+          .select("id,test_id,student_id,submitted_at,score,graded_at")
+          .in("student_id", childIds)
+          .in("test_id", testIds)
+      : Promise.resolve({ data: [] as TestSubmission[], error: null }),
+    childIds.length && testIds.length
+      ? supabase
+          .from("test_answers")
+          .select("id,submission_id,question_id,selected_choice_id,is_correct")
+          .in(
+            "submission_id",
+            unique(
+              (((await (childIds.length && testIds.length
+                ? supabase
+                    .from("test_submissions")
+                    .select("id,test_id,student_id,submitted_at,score,graded_at")
+                    .in("student_id", childIds)
+                    .in("test_id", testIds)
+                : Promise.resolve({ data: [] as TestSubmission[], error: null }))) as unknown as {
+                data: TestSubmission[];
+              }).data ?? []).map((submission) => submission.id),
+            ),
+          )
+      : Promise.resolve({ data: [] as TestAnswer[], error: null }),
+  ]);
+
+  const classRows = (unwrap(classes) as unknown) as ClassRecord[];
+  const classMap = byId(classRows);
+  const profileIds = unique([
+    ...childIds,
+    ...messages.map((message) => message.sender_id),
+    ...recipients.map((recipient) => recipient.recipient_id),
+    ...announcements.map((announcement) => announcement.author_id),
+    ...(((unwrap(assignments) as unknown) as TeacherAssignment[]).map((row) => row.teacher_id)),
+    currentUserId,
+  ]);
+  const profiles = await fetchProfilesByIds(profileIds);
+  const profileMap = byId(profiles);
+
+  return {
+    role: "parent",
+    school: (unwrap(school) as unknown) as SchoolRecord,
+    children: childIds.map<ChildSummary>((studentId) => {
+      const enrollment = ((unwrap(enrollments) as unknown) as ClassEnrollment[]).find(
+        (row) => row.student_id === studentId,
+      );
+      return {
+        userId: studentId,
+        name: fullName(profileMap[studentId]),
+        className: enrollment ? classMap[enrollment.class_id]?.name ?? "Unknown class" : "Not enrolled",
+      };
+    }),
+    enrollments: ((unwrap(enrollments) as unknown) as ClassEnrollment[]).filter((row) => childIds.includes(row.student_id)),
+    classes: classRows,
+    subjects: (unwrap(subjects) as unknown) as SubjectRecord[],
+    lessons: ((unwrap(lessons) as unknown) as Lesson[]).filter((lesson) =>
+      ((unwrap(enrollments) as unknown) as ClassEnrollment[]).some(
+        (enrollment) => childIds.includes(enrollment.student_id) && enrollment.class_id === lesson.class_id,
+      ),
+    ),
+    homework: bundleHomework(
+      homeworkRows,
+      ((unwrap(lessons) as unknown) as Lesson[]).filter((lesson) =>
+        ((unwrap(enrollments) as unknown) as ClassEnrollment[]).some(
+          (enrollment) => childIds.includes(enrollment.student_id) && enrollment.class_id === lesson.class_id,
+        ),
+      ),
+      (unwrap(homeworkQuestions) as unknown) as HomeworkQuestion[],
+      (unwrap(homeworkChoices) as unknown) as HomeworkChoice[],
+      (unwrap(homeworkSubmissions) as unknown) as HomeworkSubmission[],
+      (unwrap(homeworkAnswers) as unknown) as HomeworkAnswer[],
+    ),
+    tests: bundleTests(
+      testRows,
+      (unwrap(testQuestions) as unknown) as TestQuestion[],
+      (unwrap(testChoices) as unknown) as TestChoice[],
+      (unwrap(testSubmissions) as unknown) as TestSubmission[],
+      (unwrap(testAnswers) as unknown) as TestAnswer[],
+    ),
+    grades: ((unwrap(grades) as unknown) as FinalGrade[]).filter((grade) => childIds.includes(grade.student_id)),
+    attendance: ((unwrap(attendance) as unknown) as AttendanceRecord[]).filter((row) => childIds.includes(row.student_id)),
+    timetable: ((unwrap(timetable) as unknown) as TimetableEntry[]).filter((entry) =>
+      ((unwrap(enrollments) as unknown) as ClassEnrollment[]).some(
+        (enrollment) => childIds.includes(enrollment.student_id) && enrollment.class_id === entry.class_id,
+      ),
+    ),
+    announcements: bundleAnnouncements(announcements, targets, profileMap, classMap),
+    messages: bundleMessages(messages, recipients, profileMap),
+    recipientOptions: unique((((unwrap(assignments) as unknown) as TeacherAssignment[]).map((row) => row.teacher_id))).map<RecipientOption>(
+      (teacherId) => ({
+        id: teacherId,
+        label: fullName(profileMap[teacherId]),
+        email: profileMap[teacherId]?.email ?? null,
+      }),
+    ),
+  } satisfies ParentData;
+}
+
+async function loadWorkspaceData(workspace: Workspace, currentUserId: string) {
+  if (workspace.role === "super_admin") return loadSuperAdminData();
+  if (!workspace.schoolId) throw new Error("A school-scoped role is missing school context.");
+  if (workspace.role === "school_admin") return loadSchoolAdminData(workspace.schoolId, currentUserId);
+  if (workspace.role === "teacher") return loadTeacherData(workspace.schoolId, currentUserId);
+  if (workspace.role === "student") return loadStudentData(workspace.schoolId, currentUserId);
+  return loadParentData(workspace.schoolId, currentUserId);
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="space-y-1.5 block">
+      <span className="text-sm font-semibold text-foreground">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      {...props}
+      className={`w-full rounded-xl border border-border bg-muted px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+        props.className ?? ""
+      }`}
+    />
+  );
+}
+
+function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select
+      {...props}
+      className={`w-full rounded-xl border border-border bg-muted px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+        props.className ?? ""
+      }`}
+    />
+  );
+}
+
+function TextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea
+      {...props}
+      className={`w-full rounded-xl border border-border bg-muted px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+        props.className ?? ""
+      }`}
+    />
+  );
+}
+
+function Button({
+  children,
+  variant = "primary",
+  className = "",
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: "primary" | "secondary" | "ghost" | "danger";
+}) {
+  const palette = {
+    primary: "bg-primary text-white hover:bg-primary/90",
+    secondary: "bg-secondary text-primary hover:bg-secondary/80",
+    ghost: "bg-transparent text-muted-foreground hover:bg-muted",
+    danger: "bg-red-50 text-red-600 hover:bg-red-100",
+  };
+  return (
+    <button
+      {...props}
+      className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${palette[variant]} ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Badge({
+  children,
+  tone = "default",
+}: {
+  children: ReactNode;
+  tone?: "default" | "success" | "warning" | "danger";
+}) {
+  const tones = {
+    default: "bg-secondary text-primary",
+    success: "bg-emerald-50 text-emerald-700",
+    warning: "bg-amber-50 text-amber-700",
+    danger: "bg-red-50 text-red-700",
+  };
+  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${tones[tone]}`}>{children}</span>;
+}
+
+function Panel({
+  title,
+  description,
+  action,
+  children,
+}: {
+  title: string;
+  description?: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-lg font-bold text-foreground">{title}</h3>
+          {description ? <p className="mt-1 text-sm text-muted-foreground">{description}</p> : null}
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: string | number;
+  sub?: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-2 text-2xl font-bold text-foreground">{value}</p>
+      {sub ? <p className="mt-1 text-sm text-muted-foreground">{sub}</p> : null}
+    </div>
+  );
+}
+
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-border bg-muted/40 p-6 text-sm text-muted-foreground">
+      {message}
+    </div>
+  );
+}
+
+function Flash({ flash }: { flash: FlashState }) {
+  if (!flash) return null;
+  const styles = {
+    success: "border-emerald-200 bg-emerald-50 text-emerald-800",
+    error: "border-red-200 bg-red-50 text-red-800",
+    info: "border-blue-200 bg-blue-50 text-blue-800",
+  };
+  return (
+    <div className={`rounded-2xl border px-4 py-3 text-sm font-medium ${styles[flash.kind]}`}>
+      {flash.message}
+    </div>
+  );
+}
+
+function WorkspaceShell({
+  navItems,
+  activeView,
+  onSelect,
+  onRefresh,
+  onSignOut,
+  onSwitchWorkspace,
+  workspace,
+  profile,
+  loading,
+  children,
+}: {
+  navItems: NavItem[];
+  activeView: string;
+  onSelect: (view: string) => void;
+  onRefresh: () => void;
+  onSignOut: () => void;
+  onSwitchWorkspace: () => void;
+  workspace: Workspace;
+  profile: BasicProfile;
+  loading: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      <div className="mx-auto flex min-h-screen max-w-[1600px]">
+        <aside className="hidden w-72 shrink-0 border-r border-border bg-card/90 px-5 py-6 backdrop-blur md:flex md:flex-col">
+          <div className="rounded-2xl bg-secondary p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-primary">Smart Class</p>
+            <h1 className="mt-2 text-2xl font-bold">{workspace.schoolName}</h1>
+            <p className="mt-1 text-sm text-muted-foreground">{ROLE_LABELS[workspace.role]}</p>
+          </div>
+
+          <nav className="mt-6 space-y-1">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => onSelect(item.id)}
+                className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-semibold transition ${
+                  activeView === item.id
+                    ? "bg-primary text-white shadow-sm"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+              >
+                {item.icon}
+                {item.label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="mt-auto rounded-2xl border border-border bg-muted/40 p-4">
+            <p className="text-sm font-semibold">{fullName(profile)}</p>
+            <p className="text-xs text-muted-foreground">{profile.email}</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button variant="secondary" className="flex-1" onClick={onSwitchWorkspace}>
+                Switch
+              </Button>
+              <Button variant="ghost" className="flex-1" onClick={onSignOut}>
+                <LogOut className="w-4 h-4" />
+                Sign out
+              </Button>
+            </div>
+          </div>
+        </aside>
+
+        <main className="min-w-0 flex-1 px-4 py-4 md:px-8 md:py-6">
+          <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-primary">{ROLE_LABELS[workspace.role]}</p>
+              <h2 className="text-2xl font-bold">{workspace.schoolName}</h2>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={onSwitchWorkspace}>
+                Switch workspace
+              </Button>
+              <Button variant="secondary" onClick={onRefresh} disabled={loading}>
+                <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+              <Button variant="ghost" onClick={onSignOut}>
+                <LogOut className="w-4 h-4" />
+                Sign out
+              </Button>
+            </div>
+          </div>
+          {children}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+async function sendMessageToRecipient({
+  schoolId,
+  senderId,
+  recipientId,
+  subject,
+  body,
+}: {
+  schoolId: string;
+  senderId: string;
+  recipientId: string;
+  subject?: string;
+  body: string;
+}) {
+  const message = unwrap(
+    await supabase
+      .from("messages")
+      .insert({
+        school_id: schoolId,
+        sender_id: senderId,
+        subject: subject?.trim() || null,
+        body,
+      })
+      .select("id,school_id,sender_id,subject,body,created_at")
+      .single(),
+  ) as unknown as Message;
+  unwrap(
+    await supabase.from("message_recipients").insert({
+      message_id: message.id,
+      recipient_id: recipientId,
+    }),
+  );
+  return message;
+}
+
+function slugify(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function ConfigScreen() {
+  return (
+    <div className="min-h-screen bg-background px-4 py-10">
+      <div className="mx-auto max-w-3xl rounded-[2rem] border border-border bg-card p-8 shadow-sm">
+        <div className="flex items-start gap-4">
+          <div className="rounded-2xl bg-red-50 p-3">
+            <AlertCircle className="w-6 h-6 text-red-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold">Supabase config is missing</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to `.env.local`. I already prepared
+              `.env.example`, and this repo now expects the live app to authenticate and read data through Supabase.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AuthScreen({
+  loading,
+  onNotify,
+}: {
+  loading: boolean;
+  onNotify: (kind: "success" | "error" | "info", message: string) => void;
+}) {
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const signIn = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setBusy(true);
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    setBusy(false);
+    if (error) {
+      onNotify("error", error.message);
+      return;
+    }
+    onNotify("success", "Signed in successfully.");
+  };
+
+  const signUp = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (password.length < 6) {
+      onNotify("error", "Use a password with at least 6 characters.");
+      return;
+    }
+    setBusy(true);
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: window.location.origin,
+        data: {
+          first_name: firstName,
+          last_name: lastName,
+        },
+      },
+    });
+    setBusy(false);
+    if (error) {
+      onNotify("error", error.message);
+      return;
+    }
+    if (data.session) {
+      onNotify("success", "Account created. If this is a fresh project, continue with bootstrap after sign-in.");
+      return;
+    }
+    onNotify("info", "Account created. Check your email to confirm, then sign in.");
+  };
+
+  const sendMagicLink = async () => {
+    if (!email.trim()) {
+      onNotify("error", "Enter an email first.");
+      return;
+    }
+    setBusy(true);
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: window.location.origin,
+      },
+    });
+    setBusy(false);
+    if (error) {
+      onNotify("error", error.message);
+      return;
+    }
+    onNotify("info", "Magic link sent. Check your inbox.");
+  };
+
+  return (
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(124,92,191,0.18),_transparent_32%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.14),_transparent_28%)]" />
+      <div className="relative mx-auto grid w-full max-w-5xl gap-6 lg:grid-cols-[1.08fr_0.92fr]">
+        <div className="rounded-[2rem] border border-border bg-card/95 p-8 shadow-[0_30px_80px_rgba(28,27,58,0.08)] backdrop-blur">
+          <Badge>Smart Class</Badge>
+          <h1 className="mt-4 text-4xl font-bold leading-tight">
+            Live school operations, connected to your deployed Supabase backend.
+          </h1>
+          <p className="mt-4 max-w-2xl text-base text-muted-foreground">
+            This app now authenticates against project `tkhmeczupudwsqkluztz`, resolves the user’s real role and
+            school memberships, and loads portal data through your existing schema, RLS policies, and edge functions.
+          </p>
+          <div className="mt-8 grid gap-4 md:grid-cols-3">
+            <StatCard label="Auth" value="Live" sub="Password + magic link" />
+            <StatCard label="Backend" value="Supabase" sub="RLS-first multi-tenant schema" />
+            <StatCard label="Functions" value="Connected" sub="Provision, invite, export, notify" />
+          </div>
+          <div className="mt-8 rounded-2xl bg-muted/40 p-5">
+            <p className="text-sm font-semibold text-foreground">First time setting up this project?</p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              1. Create an account here.
+              <br />
+              2. Sign in.
+              <br />
+              3. If no roles exist yet, use the one-time bootstrap action on the next screen.
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-[2rem] border border-border bg-card/95 p-8 shadow-[0_30px_80px_rgba(28,27,58,0.08)] backdrop-blur">
+          <div className="inline-flex rounded-2xl bg-muted p-1">
+            <button
+              type="button"
+              onClick={() => setMode("signin")}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${mode === "signin" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
+            >
+              Sign in
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("signup")}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${mode === "signup" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
+            >
+              Sign up
+            </button>
+          </div>
+
+          <h2 className="mt-6 text-2xl font-bold">{mode === "signin" ? "Welcome back" : "Create account"}</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {mode === "signin"
+              ? "Use your invited account. Magic link is helpful if you do not have a password yet."
+              : "Create a new login. If this is the first account in a new project, you can bootstrap the first platform admin after signing in."}
+          </p>
+
+          <form className="mt-6 space-y-4" onSubmit={mode === "signin" ? signIn : signUp}>
+            {mode === "signup" ? (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="First name">
+                  <Input value={firstName} onChange={(event) => setFirstName(event.target.value)} />
+                </Field>
+                <Field label="Last name">
+                  <Input value={lastName} onChange={(event) => setLastName(event.target.value)} />
+                </Field>
+              </div>
+            ) : null}
+            <Field label="Email">
+              <Input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required />
+            </Field>
+            <Field label="Password">
+              <Input value={password} onChange={(event) => setPassword(event.target.value)} type="password" required />
+            </Field>
+            <div className="flex flex-wrap gap-3 pt-2">
+              <Button type="submit" disabled={busy || loading} className="min-w-[170px] flex-1">
+                {busy ? (mode === "signin" ? "Signing in..." : "Creating account...") : mode === "signin" ? "Sign in" : "Create account"}
+              </Button>
+              <Button type="button" variant="secondary" onClick={sendMagicLink} disabled={busy || loading}>
+                Send magic link
+              </Button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NoWorkspaceScreen({
+  error,
+  profile,
+  onBootstrap,
+  onRefresh,
+  onSignOut,
+  busy,
+}: {
+  error: string | null;
+  profile: BasicProfile;
+  onBootstrap: () => void;
+  onRefresh: () => void;
+  onSignOut: () => void;
+  busy: boolean;
+}) {
+  return (
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(124,92,191,0.18),_transparent_32%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.12),_transparent_28%)]" />
+      <div className="relative mx-auto w-full max-w-3xl rounded-[2rem] border border-border bg-card/95 p-8 shadow-[0_30px_80px_rgba(28,27,58,0.08)] backdrop-blur">
+        <Badge>No workspace yet</Badge>
+        <h1 className="mt-5 text-3xl font-bold">This account is signed in, but it has no active role yet.</h1>
+        <p className="mt-3 text-sm text-muted-foreground">
+          {error || "If this is the first account in a fresh project, bootstrap it as the initial super admin. Otherwise, ask an existing admin to invite this email into a school."}
+        </p>
+
+        <div className="mt-6 grid gap-4 md:grid-cols-2">
+          <div className="rounded-2xl bg-muted/40 p-5">
+            <p className="text-sm font-semibold">Signed in as</p>
+            <p className="mt-2 text-lg font-bold">{fullName(profile)}</p>
+            <p className="text-sm text-muted-foreground">{profile.email}</p>
+          </div>
+          <div className="rounded-2xl bg-muted/40 p-5">
+            <p className="text-sm font-semibold">What to do next</p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Use bootstrap only once for a brand-new project. If your platform is already set up, do not bootstrap again.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-8 flex flex-wrap gap-3">
+          <Button onClick={onBootstrap} disabled={busy}>
+            {busy ? "Bootstrapping..." : "Bootstrap first super admin"}
+          </Button>
+          <Button variant="secondary" onClick={onRefresh} disabled={busy}>
+            Refresh roles
+          </Button>
+          <Button variant="ghost" onClick={onSignOut} disabled={busy}>
+            Sign out
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WorkspacePicker({
+  workspaces,
+  onPick,
+  onSignOut,
+  profile,
+}: {
+  workspaces: Workspace[];
+  onPick: (workspace: Workspace) => void;
+  onSignOut: () => void;
+  profile: BasicProfile | null;
+}) {
+  return (
+    <div className="min-h-screen bg-background px-4 py-10">
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-primary">Choose workspace</p>
+            <h1 className="text-3xl font-bold">{fullName(profile)}</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              This account has multiple active roles or schools. Pick the workspace you want to open.
+            </p>
+          </div>
+          <Button variant="ghost" onClick={onSignOut}>
+            <LogOut className="w-4 h-4" />
+            Sign out
+          </Button>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {workspaces.map((workspace) => (
+            <button
+              key={workspace.key}
+              onClick={() => onPick(workspace)}
+              className="rounded-[1.5rem] border border-border bg-card p-6 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
+            >
+              <Badge>{ROLE_LABELS[workspace.role]}</Badge>
+              <h2 className="mt-4 text-xl font-bold">{workspace.schoolName}</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {workspace.school ? `${workspace.school.slug} / ${workspace.school.timezone}` : "Platform scope"}
+              </p>
+              <div className="mt-6 flex items-center gap-2 text-sm font-semibold text-primary">
+                Open workspace
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SuperAdminPortal({
+  view,
+  data,
+  onNotify,
+  onRefresh,
+  onOpenSchool,
+}: {
+  view: string;
+  data: SuperAdminData;
+  onNotify: (kind: "success" | "error" | "info", message: string) => void;
+  onRefresh: () => Promise<void>;
+  onOpenSchool: (school: SchoolRecord) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [schoolForm, setSchoolForm] = useState({
+    school_name: "",
+    slug: "",
+    timezone: "Africa/Cairo",
+    plan_id: data.plans[0]?.id ?? "",
+    admin_first_name: "",
+    admin_last_name: "",
+    admin_email: "",
+  });
+  const [settingForm, setSettingForm] = useState({
+    key: "",
+    value: "{\n  \n}",
+  });
+  const [planForm, setPlanForm] = useState({
+    id: "",
+    name: "",
+    max_students: "",
+    max_teachers: "",
+    price_cents: "0",
+    billing_cycle: "monthly",
+    features: "{\n  \n}",
+    is_active: true,
+  });
+  const [roleForm, setRoleForm] = useState({
+    user_id: data.profiles[0]?.id ?? "",
+    role: "school_admin" as UserRole,
+    school_id: data.schools[0]?.id ?? "",
+  });
+  const [peopleQuery, setPeopleQuery] = useState("");
+  const [accessQuery, setAccessQuery] = useState("");
+  const [auditQuery, setAuditQuery] = useState("");
+  const [subscriptionDrafts, setSubscriptionDrafts] = useState<Record<string, { plan_id: string; status: string; ends_at: string }>>({});
+
+  const totalStudents = data.stats.reduce((sum, item) => sum + Number(item.student_count || 0), 0);
+  const totalTeachers = data.stats.reduce((sum, item) => sum + Number(item.teacher_count || 0), 0);
+  const totalParents = data.stats.reduce((sum, item) => sum + Number(item.parent_count || 0), 0);
+  const activeSchools = data.stats.filter((item) => item.is_active).length;
+  const activeProfiles = data.profiles.filter((item) => item.is_active).length;
+  const schoolMap = byId(data.schools);
+  const planMap = byId(data.plans);
+  const profileMap = byId(data.profiles);
+  const activeSuperAdminCount = data.roleRows.filter((row) => row.role === "super_admin" && row.is_active).length;
+
+  useEffect(() => {
+    setSubscriptionDrafts(
+      Object.fromEntries(
+        data.subscriptions.map((subscription) => [
+          subscription.id,
+          {
+            plan_id: subscription.plan_id,
+            status: subscription.status,
+            ends_at: subscription.ends_at ? subscription.ends_at.slice(0, 10) : "",
+          },
+        ]),
+      ),
+    );
+  }, [data.subscriptions]);
+
+  useEffect(() => {
+    setSchoolForm((prev) => ({
+      ...prev,
+      plan_id: prev.plan_id || data.plans[0]?.id || "",
+    }));
+    setRoleForm((prev) => ({
+      ...prev,
+      user_id: prev.user_id || data.profiles[0]?.id || "",
+      school_id: prev.school_id || data.schools[0]?.id || "",
+    }));
+  }, [data.plans, data.profiles, data.schools]);
+
+  const roleRowsByUser = data.roleRows.reduce<Record<string, RoleRow[]>>((acc, row) => {
+    if (!acc[row.user_id]) {
+      acc[row.user_id] = [];
+    }
+    acc[row.user_id].push(row);
+    return acc;
+  }, {});
+
+  const latestSubscriptionsBySchool = data.subscriptions.reduce<Record<string, SchoolSubscription>>((acc, row) => {
+    if (!acc[row.school_id]) {
+      acc[row.school_id] = row;
+    }
+    return acc;
+  }, {});
+
+  const currentSubscriptions = Object.values(latestSubscriptionsBySchool).sort((a, b) => {
+    const schoolA = schoolMap[a.school_id]?.name ?? "";
+    const schoolB = schoolMap[b.school_id]?.name ?? "";
+    return schoolA.localeCompare(schoolB);
+  });
+
+  const peopleRows = data.profiles
+    .map((profile) => ({
+      profile,
+      roles: (roleRowsByUser[profile.id] ?? []).sort((a, b) => {
+        const rank = roleRank(a.role) - roleRank(b.role);
+        if (rank !== 0) return rank;
+        const scopeA = a.school_id ? schoolMap[a.school_id]?.name ?? "" : "Platform";
+        const scopeB = b.school_id ? schoolMap[b.school_id]?.name ?? "" : "Platform";
+        return scopeA.localeCompare(scopeB);
+      }),
+    }))
+    .filter(({ profile, roles }) => {
+      const query = peopleQuery.trim().toLowerCase();
+      if (!query) return true;
+      const haystack = [
+        fullName(profile),
+        profile.email ?? "",
+        roles.map((row) => ROLE_LABELS[row.role]).join(" "),
+        roles.map((row) => (row.school_id ? schoolMap[row.school_id]?.name ?? "" : "platform")).join(" "),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    })
+    .sort((a, b) => fullName(a.profile).localeCompare(fullName(b.profile)));
+
+  const filteredRoleRows = [...data.roleRows]
+    .filter((row) => {
+      const query = accessQuery.trim().toLowerCase();
+      if (!query) return true;
+      const profile = profileMap[row.user_id];
+      const haystack = [
+        fullName(profile),
+        profile?.email ?? "",
+        ROLE_LABELS[row.role],
+        row.school_id ? schoolMap[row.school_id]?.name ?? "" : "platform",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    })
+    .sort((a, b) => {
+      const rank = roleRank(a.role) - roleRank(b.role);
+      if (rank !== 0) return rank;
+      const schoolA = a.school_id ? schoolMap[a.school_id]?.name ?? "" : "Platform";
+      const schoolB = b.school_id ? schoolMap[b.school_id]?.name ?? "" : "Platform";
+      if (schoolA !== schoolB) return schoolA.localeCompare(schoolB);
+      return fullName(profileMap[a.user_id]).localeCompare(fullName(profileMap[b.user_id]));
+    });
+
+  const filteredAuditLogs = data.auditLogs.filter((row) => {
+    const query = auditQuery.trim().toLowerCase();
+    if (!query) return true;
+    const actor = row.actor_id ? profileMap[row.actor_id] : null;
+    const schoolLabel = row.school_id ? schoolMap[row.school_id]?.name ?? "" : "platform";
+    const haystack = [row.action, row.entity_type, fullName(actor), actor?.email ?? "", schoolLabel].join(" ").toLowerCase();
+    return haystack.includes(query);
+  });
+
+  const resetPlanForm = () => {
+    setPlanForm({
+      id: "",
+      name: "",
+      max_students: "",
+      max_teachers: "",
+      price_cents: "0",
+      billing_cycle: "monthly",
+      features: "{\n  \n}",
+      is_active: true,
+    });
+  };
+
+  const submitSchool = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    try {
+      setBusy(true);
+      await invokeFunctionJson("provision-school", {
+        ...schoolForm,
+        slug: schoolForm.slug.trim() || undefined,
+      });
+      setSchoolForm({
+        school_name: "",
+        slug: "",
+        timezone: "Africa/Cairo",
+        plan_id: data.plans[0]?.id ?? "",
+        admin_first_name: "",
+        admin_last_name: "",
+        admin_email: "",
+      });
+      onNotify("success", "School provisioned and admin invite sent.");
+      await onRefresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to provision school.";
+      onNotify(
+        "error",
+        message.includes("already in use") || message.includes("schools_slug_key")
+          ? "That slug is already used by another school. Leave slug blank for auto-generation or choose a different one."
+          : message,
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleSchool = async (school: SchoolRecord) => {
+    try {
+      setBusy(true);
+      unwrap(
+        await supabase.from("schools").update({ is_active: !school.is_active }).eq("id", school.id),
+      );
+      onNotify("success", `${school.name} ${school.is_active ? "deactivated" : "activated"}.`);
+      await onRefresh();
+    } catch (error) {
+      onNotify("error", error instanceof Error ? error.message : "Failed to update school.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const archiveSchool = async (school: SchoolRecord) => {
+    try {
+      setBusy(true);
+      await invokeFunctionJson("soft-delete-entity", {
+        table: "schools",
+        id: school.id,
+        hard: false,
+      });
+      onNotify("success", `${school.name} archived.`);
+      await onRefresh();
+    } catch (error) {
+      onNotify("error", error instanceof Error ? error.message : "Failed to archive school.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveSetting = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    try {
+      setBusy(true);
+      let parsed: unknown = settingForm.value;
+      try {
+        parsed = JSON.parse(settingForm.value);
+      } catch {
+        parsed = settingForm.value;
+      }
+      unwrap(
+        await supabase.from("platform_settings").upsert({
+          key: settingForm.key,
+          value: parsed,
+        }),
+      );
+      onNotify("success", "Platform setting saved.");
+      setSettingForm({ key: "", value: "{\n  \n}" });
+      await onRefresh();
+    } catch (error) {
+      onNotify("error", error instanceof Error ? error.message : "Failed to save setting.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const savePlan = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    try {
+      setBusy(true);
+      const priceCents = Number(planForm.price_cents);
+      if (!Number.isFinite(priceCents)) {
+        throw new Error("Plan price must be a valid number in cents.");
+      }
+      const maxStudents = planForm.max_students.trim() ? Number(planForm.max_students) : null;
+      const maxTeachers = planForm.max_teachers.trim() ? Number(planForm.max_teachers) : null;
+      if (maxStudents !== null && !Number.isFinite(maxStudents)) {
+        throw new Error("Max students must be a valid number.");
+      }
+      if (maxTeachers !== null && !Number.isFinite(maxTeachers)) {
+        throw new Error("Max teachers must be a valid number.");
+      }
+
+      let parsedFeatures: Record<string, unknown> = {};
+      if (planForm.features.trim()) {
+        const raw = JSON.parse(planForm.features);
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+          throw new Error("Plan features must be a JSON object.");
+        }
+        parsedFeatures = raw as Record<string, unknown>;
+      }
+
+      const payload: Record<string, unknown> = {
+        name: planForm.name,
+        max_students: maxStudents,
+        max_teachers: maxTeachers,
+        price_cents: priceCents,
+        billing_cycle: planForm.billing_cycle,
+        features: parsedFeatures,
+        is_active: planForm.is_active,
+      };
+      if (planForm.id) {
+        payload.id = planForm.id;
+      }
+
+      unwrap(await supabase.from("subscription_plans").upsert(payload));
+      onNotify("success", planForm.id ? "Subscription plan updated." : "Subscription plan created.");
+      resetPlanForm();
+      await onRefresh();
+    } catch (error) {
+      onNotify("error", error instanceof Error ? error.message : "Failed to save subscription plan.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const editPlan = (plan: Plan) => {
+    setPlanForm({
+      id: plan.id,
+      name: plan.name,
+      max_students: plan.max_students == null ? "" : String(plan.max_students),
+      max_teachers: plan.max_teachers == null ? "" : String(plan.max_teachers),
+      price_cents: String(plan.price_cents),
+      billing_cycle: plan.billing_cycle,
+      features: JSON.stringify(plan.features ?? {}, null, 2),
+      is_active: plan.is_active,
+    });
+  };
+
+  const togglePlan = async (plan: Plan) => {
+    try {
+      setBusy(true);
+      unwrap(await supabase.from("subscription_plans").update({ is_active: !plan.is_active }).eq("id", plan.id));
+      onNotify("success", `${plan.name} ${plan.is_active ? "deactivated" : "activated"}.`);
+      await onRefresh();
+    } catch (error) {
+      onNotify("error", error instanceof Error ? error.message : "Failed to update plan.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveRoleAssignment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    try {
+      setBusy(true);
+      if (!roleForm.user_id) {
+        throw new Error("Select a user first.");
+      }
+      if (roleForm.role !== "super_admin" && !roleForm.school_id) {
+        throw new Error("Select a school for school-scoped roles.");
+      }
+      unwrap(
+        await supabase.from("user_school_roles").upsert(
+          {
+            user_id: roleForm.user_id,
+            school_id: roleForm.role === "super_admin" ? null : roleForm.school_id,
+            role: roleForm.role,
+            is_active: true,
+          },
+          { onConflict: "user_id,school_id,role" },
+        ),
+      );
+      onNotify("success", "Role assignment saved.");
+      await onRefresh();
+    } catch (error) {
+      onNotify("error", error instanceof Error ? error.message : "Failed to save role assignment.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleRoleAssignment = async (row: RoleRow) => {
+    try {
+      if (row.role === "super_admin" && row.is_active && activeSuperAdminCount <= 1) {
+        onNotify("error", "Keep at least one active super admin in the project.");
+        return;
+      }
+      setBusy(true);
+      unwrap(await supabase.from("user_school_roles").update({ is_active: !row.is_active }).eq("id", row.id));
+      onNotify("success", `${ROLE_LABELS[row.role]} access ${row.is_active ? "disabled" : "enabled"}.`);
+      await onRefresh();
+    } catch (error) {
+      onNotify("error", error instanceof Error ? error.message : "Failed to update role assignment.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateSubscriptionDraft = (
+    subscriptionId: string,
+    field: "plan_id" | "status" | "ends_at",
+    value: string,
+  ) => {
+    setSubscriptionDrafts((prev) => ({
+      ...prev,
+      [subscriptionId]: {
+        plan_id: prev[subscriptionId]?.plan_id ?? "",
+        status: prev[subscriptionId]?.status ?? "trialing",
+        ends_at: prev[subscriptionId]?.ends_at ?? "",
+        [field]: value,
+      },
+    }));
+  };
+
+  const saveSubscription = async (subscription: SchoolSubscription) => {
+    try {
+      setBusy(true);
+      const draft = subscriptionDrafts[subscription.id];
+      if (!draft?.plan_id) {
+        throw new Error("Select a plan for this subscription.");
+      }
+      unwrap(
+        await supabase
+          .from("school_subscriptions")
+          .update({
+            plan_id: draft.plan_id,
+            status: draft.status,
+            ends_at: draft.ends_at || null,
+          })
+          .eq("id", subscription.id),
+      );
+      onNotify("success", "School subscription updated.");
+      await onRefresh();
+    } catch (error) {
+      onNotify("error", error instanceof Error ? error.message : "Failed to update school subscription.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (view === "dashboard") {
+    return (
+      <div className="space-y-6">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
+          <StatCard label="Schools" value={data.counts.schools.toLocaleString()} sub={`${activeSchools} active`} />
+          <StatCard label="Students" value={totalStudents.toLocaleString()} />
+          <StatCard label="Teachers" value={totalTeachers.toLocaleString()} />
+          <StatCard label="Profiles" value={data.counts.profiles.toLocaleString()} />
+          <StatCard label="Role Rows" value={data.counts.role_assignments.toLocaleString()} />
+          <StatCard label="Classes" value={data.counts.classes.toLocaleString()} />
+          <StatCard label="Lessons" value={data.counts.lessons.toLocaleString()} />
+          <StatCard label="Plans" value={data.plans.length.toLocaleString()} />
+        </div>
+
+        <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+          <Panel title="School Activity" description="Usage stats from `get_school_usage_stats()` plus quick jump into school admin operations.">
+            <div className="space-y-3">
+              {data.stats.slice(0, 8).map((row) => (
+                <div key={row.school_id} className="rounded-2xl bg-muted/30 p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <p className="font-semibold">{row.school_name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {row.student_count} students / {row.teacher_count} teachers / {row.class_count} classes
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge tone={row.is_active ? "success" : "warning"}>{row.subscription_status ?? "No plan"}</Badge>
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          const school = data.schools.find((item) => item.id === row.school_id);
+                          if (school) {
+                            onOpenSchool(school);
+                          }
+                        }}
+                      >
+                        Open school
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <div className="space-y-6">
+            <Panel title="Platform Activity" description="Recent audit entries from the whole project.">
+              <div className="space-y-3">
+                {data.auditLogs.slice(0, 6).map((row) => (
+                  <div key={row.id} className="rounded-2xl bg-muted/30 p-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-semibold">{row.action}</p>
+                      <Badge>{row.entity_type}</Badge>
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {row.actor_id ? fullName(profileMap[row.actor_id]) : "System"} / {formatDateTime(row.created_at)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+
+            <Panel title="Subscription Plans" description="Live rows from `subscription_plans`.">
+              <div className="space-y-3">
+                {data.plans.map((plan) => (
+                  <div key={plan.id} className="rounded-2xl bg-muted/30 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-semibold">{plan.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {currencyFromCents(plan.price_cents)} / {plan.billing_cycle}
+                        </p>
+                      </div>
+                      <Badge tone={plan.is_active ? "success" : "warning"}>
+                        {plan.is_active ? "Active" : "Inactive"}
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === "people") {
+    return (
+      <div className="space-y-6">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Profiles" value={data.counts.profiles.toLocaleString()} sub={`${activeProfiles} active`} />
+          <StatCard label="Parents" value={totalParents.toLocaleString()} />
+          <StatCard label="Super Admins" value={activeSuperAdminCount.toLocaleString()} />
+          <StatCard label="No Role" value={data.profiles.filter((profile) => (roleRowsByUser[profile.id] ?? []).length === 0).length} />
+        </div>
+
+        <Panel title="Project Directory" description="Live rows from `profiles`, matched with current role assignments.">
+          <div className="mb-4 max-w-md">
+            <Field label="Search people">
+              <Input
+                value={peopleQuery}
+                onChange={(event) => setPeopleQuery(event.target.value)}
+                placeholder="Search by name, email, school, or role"
+              />
+            </Field>
+          </div>
+          <div className="space-y-3">
+            {peopleRows.length === 0 ? (
+              <EmptyState message="No matching profiles found." />
+            ) : (
+              peopleRows.map(({ profile, roles }) => (
+                <div key={profile.id} className="rounded-2xl border border-border bg-muted/30 p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-lg font-bold">{fullName(profile)}</h3>
+                        <Badge tone={profile.is_active ? "success" : "warning"}>
+                          {profile.is_active ? "Profile active" : "Profile inactive"}
+                        </Badge>
+                        {roles.length === 0 ? <Badge tone="warning">No assigned role</Badge> : null}
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        {profile.email ?? "No email on file"} / Joined {formatDate(profile.created_at)}
+                      </p>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Access changes happen in the Access tab. School operations open from the Schools tab.
+                    </p>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {roles.map((row) => (
+                      <Badge key={row.id} tone={row.is_active ? "default" : "warning"}>
+                        {ROLE_LABELS[row.role]} / {row.school_id ? schoolMap[row.school_id]?.name ?? "Unknown school" : "Platform"}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "access") {
+    return (
+      <div className="space-y-6">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Role Rows" value={data.counts.role_assignments.toLocaleString()} />
+          <StatCard label="School Admins" value={data.roleRows.filter((row) => row.role === "school_admin" && row.is_active).length} />
+          <StatCard label="Teachers" value={data.roleRows.filter((row) => row.role === "teacher" && row.is_active).length} />
+          <StatCard label="Students" value={data.roleRows.filter((row) => row.role === "student" && row.is_active).length} />
+        </div>
+
+        <Panel title="Grant or Reactivate Access" description="Insert or reactivate rows in `user_school_roles`.">
+          <form className="grid gap-4 lg:grid-cols-[1.3fr_0.8fr_1fr_auto]" onSubmit={saveRoleAssignment}>
+            <Field label="User">
+              <Select
+                value={roleForm.user_id}
+                onChange={(event) => setRoleForm((prev) => ({ ...prev, user_id: event.target.value }))}
+                required
+              >
+                {data.profiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {fullName(profile)} / {profile.email ?? "No email"}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Role">
+              <Select
+                value={roleForm.role}
+                onChange={(event) => setRoleForm((prev) => ({ ...prev, role: event.target.value as UserRole }))}
+              >
+                <option value="super_admin">Super Admin</option>
+                <option value="school_admin">School Admin</option>
+                <option value="teacher">Teacher</option>
+                <option value="student">Student</option>
+                <option value="parent">Parent</option>
+              </Select>
+            </Field>
+            <Field label="School">
+              <Select
+                value={roleForm.school_id}
+                onChange={(event) => setRoleForm((prev) => ({ ...prev, school_id: event.target.value }))}
+                disabled={roleForm.role === "super_admin"}
+                required={roleForm.role !== "super_admin"}
+              >
+                {data.schools.map((school) => (
+                  <option key={school.id} value={school.id}>
+                    {school.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <div className="flex items-end">
+              <Button type="submit" disabled={busy}>
+                Save access
+              </Button>
+            </div>
+          </form>
+        </Panel>
+
+        <Panel title="Role Assignments" description="Toggle live access rows without leaving the platform console.">
+          <div className="mb-4 max-w-md">
+            <Field label="Search role assignments">
+              <Input
+                value={accessQuery}
+                onChange={(event) => setAccessQuery(event.target.value)}
+                placeholder="Search by user, role, or school"
+              />
+            </Field>
+          </div>
+          <div className="space-y-3">
+            {filteredRoleRows.length === 0 ? (
+              <EmptyState message="No matching role assignments found." />
+            ) : (
+              filteredRoleRows.map((row) => {
+                const profile = profileMap[row.user_id];
+                const scopeLabel = row.school_id ? schoolMap[row.school_id]?.name ?? "Unknown school" : "Platform";
+                return (
+                  <div key={row.id} className="rounded-2xl border border-border bg-muted/30 p-4">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-semibold">{fullName(profile)}</p>
+                          <Badge>{ROLE_LABELS[row.role]}</Badge>
+                          <Badge tone={row.is_active ? "success" : "warning"}>
+                            {row.is_active ? "Active" : "Inactive"}
+                          </Badge>
+                        </div>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          {profile?.email ?? "No email"} / {scopeLabel}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Granted {formatDate(row.created_at)}
+                        </p>
+                      </div>
+                      <Button
+                        variant={row.is_active ? "danger" : "secondary"}
+                        onClick={() => void toggleRoleAssignment(row)}
+                        disabled={busy}
+                      >
+                        {row.is_active ? "Disable" : "Enable"}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "billing") {
+    return (
+      <div className="space-y-6">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Plans" value={data.plans.length.toLocaleString()} />
+          <StatCard label="Subscriptions" value={currentSubscriptions.length.toLocaleString()} />
+          <StatCard label="Active Plans" value={data.plans.filter((plan) => plan.is_active).length} />
+          <StatCard label="Past Due" value={currentSubscriptions.filter((subscription) => subscription.status === "past_due").length} />
+        </div>
+
+        <Panel title="Create or Update Plan" description="Write directly to `subscription_plans` with super admin privileges.">
+          <form className="grid gap-4 lg:grid-cols-2" onSubmit={savePlan}>
+            <Field label="Plan name">
+              <Input
+                value={planForm.name}
+                onChange={(event) => setPlanForm((prev) => ({ ...prev, name: event.target.value }))}
+                required
+              />
+            </Field>
+            <Field label="Billing cycle">
+              <Select
+                value={planForm.billing_cycle}
+                onChange={(event) => setPlanForm((prev) => ({ ...prev, billing_cycle: event.target.value }))}
+              >
+                <option value="monthly">monthly</option>
+                <option value="yearly">yearly</option>
+              </Select>
+            </Field>
+            <Field label="Price (cents)">
+              <Input
+                value={planForm.price_cents}
+                onChange={(event) => setPlanForm((prev) => ({ ...prev, price_cents: event.target.value }))}
+                required
+              />
+            </Field>
+            <Field label="Active">
+              <Select
+                value={planForm.is_active ? "true" : "false"}
+                onChange={(event) => setPlanForm((prev) => ({ ...prev, is_active: event.target.value === "true" }))}
+              >
+                <option value="true">Active</option>
+                <option value="false">Inactive</option>
+              </Select>
+            </Field>
+            <Field label="Max students">
+              <Input
+                value={planForm.max_students}
+                onChange={(event) => setPlanForm((prev) => ({ ...prev, max_students: event.target.value }))}
+                placeholder="optional"
+              />
+            </Field>
+            <Field label="Max teachers">
+              <Input
+                value={planForm.max_teachers}
+                onChange={(event) => setPlanForm((prev) => ({ ...prev, max_teachers: event.target.value }))}
+                placeholder="optional"
+              />
+            </Field>
+            <div className="lg:col-span-2">
+              <Field label="Features JSON">
+                <TextArea
+                  rows={6}
+                  value={planForm.features}
+                  onChange={(event) => setPlanForm((prev) => ({ ...prev, features: event.target.value }))}
+                />
+              </Field>
+            </div>
+            <div className="flex flex-wrap gap-3 lg:col-span-2">
+              <Button type="submit" disabled={busy}>
+                {planForm.id ? "Update plan" : "Create plan"}
+              </Button>
+              {planForm.id ? (
+                <Button type="button" variant="ghost" onClick={resetPlanForm}>
+                  Cancel edit
+                </Button>
+              ) : null}
+            </div>
+          </form>
+        </Panel>
+
+        <Panel title="Subscription Plans" description="Live rows from `subscription_plans`.">
+          <div className="space-y-3">
+            {data.plans.map((plan) => (
+              <div key={plan.id} className="rounded-2xl border border-border bg-muted/30 p-4">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-semibold">{plan.name}</p>
+                      <Badge tone={plan.is_active ? "success" : "warning"}>
+                        {plan.is_active ? "Active" : "Inactive"}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      {currencyFromCents(plan.price_cents)} / {plan.billing_cycle}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Max students: {plan.max_students ?? "Unlimited"} / Max teachers: {plan.max_teachers ?? "Unlimited"}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="secondary" onClick={() => editPlan(plan)}>
+                      Edit
+                    </Button>
+                    <Button variant={plan.is_active ? "danger" : "secondary"} onClick={() => void togglePlan(plan)} disabled={busy}>
+                      {plan.is_active ? "Deactivate" : "Activate"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="School Subscriptions" description="Update current plan and billing status per school.">
+          <div className="space-y-4">
+            {currentSubscriptions.length === 0 ? (
+              <EmptyState message="No school subscriptions found yet." />
+            ) : (
+              currentSubscriptions.map((subscription) => {
+                const draft = subscriptionDrafts[subscription.id] ?? {
+                  plan_id: subscription.plan_id,
+                  status: subscription.status,
+                  ends_at: subscription.ends_at ? subscription.ends_at.slice(0, 10) : "",
+                };
+                return (
+                  <div key={subscription.id} className="rounded-2xl border border-border bg-muted/30 p-4">
+                    <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr_1fr_180px_auto]">
+                      <div>
+                        <p className="font-semibold">{schoolMap[subscription.school_id]?.name ?? "Unknown school"}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Started {formatDate(subscription.starts_at)} / Current plan {planMap[subscription.plan_id]?.name ?? "Unknown"}
+                        </p>
+                      </div>
+                      <Field label="Plan">
+                        <Select
+                          value={draft.plan_id}
+                          onChange={(event) => updateSubscriptionDraft(subscription.id, "plan_id", event.target.value)}
+                        >
+                          {data.plans.map((plan) => (
+                            <option key={plan.id} value={plan.id}>
+                              {plan.name}
+                            </option>
+                          ))}
+                        </Select>
+                      </Field>
+                      <Field label="Status">
+                        <Select
+                          value={draft.status}
+                          onChange={(event) => updateSubscriptionDraft(subscription.id, "status", event.target.value)}
+                        >
+                          <option value="trialing">trialing</option>
+                          <option value="active">active</option>
+                          <option value="past_due">past_due</option>
+                          <option value="canceled">canceled</option>
+                          <option value="suspended">suspended</option>
+                        </Select>
+                      </Field>
+                      <Field label="Ends at">
+                        <Input
+                          type="date"
+                          value={draft.ends_at}
+                          onChange={(event) => updateSubscriptionDraft(subscription.id, "ends_at", event.target.value)}
+                        />
+                      </Field>
+                      <div className="flex items-end">
+                        <Button onClick={() => void saveSubscription(subscription)} disabled={busy}>
+                          Save
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "audit") {
+    return (
+      <div className="space-y-6">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Audit Logs" value={data.auditLogs.length.toLocaleString()} />
+          <StatCard label="Announcements" value={data.counts.announcements.toLocaleString()} />
+          <StatCard label="Messages" value={data.counts.messages.toLocaleString()} />
+          <StatCard label="Lessons" value={data.counts.lessons.toLocaleString()} />
+        </div>
+
+        <Panel title="Recent Audit Activity" description="Latest rows from `audit_logs` across the platform.">
+          <div className="mb-4 max-w-md">
+            <Field label="Search audit logs">
+              <Input
+                value={auditQuery}
+                onChange={(event) => setAuditQuery(event.target.value)}
+                placeholder="Search by action, entity, actor, or school"
+              />
+            </Field>
+          </div>
+          <div className="space-y-3">
+            {filteredAuditLogs.length === 0 ? (
+              <EmptyState message="No matching audit logs found." />
+            ) : (
+              filteredAuditLogs.map((row) => {
+                const actor = row.actor_id ? profileMap[row.actor_id] : null;
+                const schoolLabel = row.school_id ? schoolMap[row.school_id]?.name ?? "Unknown school" : "Platform";
+                return (
+                  <div key={row.id} className="rounded-2xl border border-border bg-muted/30 p-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-semibold">{row.action}</p>
+                          <Badge>{row.entity_type}</Badge>
+                          <Badge tone="warning">{schoolLabel}</Badge>
+                        </div>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          {actor ? `${fullName(actor)} / ${actor.email ?? "No email"}` : "System action"} / {formatDateTime(row.created_at)}
+                        </p>
+                      </div>
+                    </div>
+                    <pre className="mt-3 max-h-40 overflow-auto rounded-xl bg-background/80 p-3 text-xs text-muted-foreground">
+                      {JSON.stringify(row.metadata ?? {}, null, 2)}
+                    </pre>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "settings") {
+    return (
+      <div className="space-y-6">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Profiles" value={data.counts.profiles.toLocaleString()} />
+          <StatCard label="Classes" value={data.counts.classes.toLocaleString()} />
+          <StatCard label="Subjects" value={data.counts.subjects.toLocaleString()} />
+          <StatCard label="Messages" value={data.counts.messages.toLocaleString()} />
+        </div>
+
+        <Panel title="Platform Settings" description="Direct writes to `platform_settings` for super admins only.">
+          <form className="grid gap-4 lg:grid-cols-[240px_1fr_auto]" onSubmit={saveSetting}>
+            <Field label="Key">
+              <Input
+                value={settingForm.key}
+                onChange={(event) => setSettingForm((prev) => ({ ...prev, key: event.target.value }))}
+                required
+              />
+            </Field>
+            <Field label="JSON value">
+              <TextArea
+                rows={4}
+                value={settingForm.value}
+                onChange={(event) => setSettingForm((prev) => ({ ...prev, value: event.target.value }))}
+              />
+            </Field>
+            <div className="flex items-end">
+              <Button type="submit" disabled={busy}>
+                Save
+              </Button>
+            </div>
+          </form>
+          <div className="mt-6 space-y-3">
+            {data.settings.length === 0 ? (
+              <EmptyState message="No platform settings rows yet." />
+            ) : (
+              data.settings.map((setting) => (
+                <div key={setting.key} className="rounded-2xl border border-border bg-muted/30 p-4">
+                  <p className="text-sm font-semibold">{setting.key}</p>
+                  <pre className="mt-2 overflow-x-auto text-xs text-muted-foreground">
+                    {JSON.stringify(setting.value, null, 2)}
+                  </pre>
+                </div>
+              ))
+            )}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "schools") {
+    return (
+      <div className="space-y-6">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Schools" value={data.counts.schools.toLocaleString()} sub={`${activeSchools} active`} />
+          <StatCard label="Subscriptions" value={currentSubscriptions.length.toLocaleString()} />
+          <StatCard label="Students" value={totalStudents.toLocaleString()} />
+          <StatCard label="Teachers" value={totalTeachers.toLocaleString()} />
+        </div>
+
+        <Panel title="Provision a School" description="Calls the deployed `provision-school` edge function.">
+          <form className="grid gap-4 lg:grid-cols-2" onSubmit={submitSchool}>
+            <Field label="School name">
+              <Input
+                value={schoolForm.school_name}
+                onChange={(event) => setSchoolForm((prev) => ({ ...prev, school_name: event.target.value }))}
+                required
+              />
+            </Field>
+            <Field label="Slug">
+              <Input
+                value={schoolForm.slug}
+                onChange={(event) => setSchoolForm((prev) => ({ ...prev, slug: event.target.value }))}
+                placeholder="auto-generated if blank"
+              />
+            </Field>
+            <Field label="Timezone">
+              <Input
+                value={schoolForm.timezone}
+                onChange={(event) => setSchoolForm((prev) => ({ ...prev, timezone: event.target.value }))}
+                required
+              />
+            </Field>
+            <Field label="Subscription plan">
+              <Select
+                value={schoolForm.plan_id}
+                onChange={(event) => setSchoolForm((prev) => ({ ...prev, plan_id: event.target.value }))}
+                required
+              >
+                {data.plans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>
+                    {plan.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Admin first name">
+              <Input
+                value={schoolForm.admin_first_name}
+                onChange={(event) => setSchoolForm((prev) => ({ ...prev, admin_first_name: event.target.value }))}
+                required
+              />
+            </Field>
+            <Field label="Admin last name">
+              <Input
+                value={schoolForm.admin_last_name}
+                onChange={(event) => setSchoolForm((prev) => ({ ...prev, admin_last_name: event.target.value }))}
+              />
+            </Field>
+            <Field label="Admin email">
+              <Input
+                type="email"
+                value={schoolForm.admin_email}
+                onChange={(event) => setSchoolForm((prev) => ({ ...prev, admin_email: event.target.value }))}
+                required
+              />
+            </Field>
+            <div className="lg:col-span-2">
+              <Button type="submit" disabled={busy}>
+                <Plus className="w-4 h-4" />
+                {busy ? "Provisioning..." : "Provision school"}
+              </Button>
+            </div>
+          </form>
+        </Panel>
+
+        <Panel title="Schools" description="Live rows from `schools`, `school_subscriptions`, and usage stats.">
+          <div className="space-y-3">
+            {data.stats.length === 0 ? (
+              <EmptyState message="No schools found yet." />
+            ) : (
+              data.stats.map((school) => {
+                const subscription = latestSubscriptionsBySchool[school.school_id];
+                const planName = subscription ? planMap[subscription.plan_id]?.name ?? "Unknown plan" : "No plan";
+                const schoolRow = data.schools.find((row) => row.id === school.school_id) ?? {
+                  id: school.school_id,
+                  name: school.school_name,
+                  slug: "",
+                  timezone: "UTC",
+                  is_active: school.is_active,
+                };
+
+                return (
+                  <div key={school.school_id} className="rounded-2xl border border-border bg-muted/30 p-4">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-lg font-bold">{school.school_name}</h3>
+                          <Badge tone={school.is_active ? "success" : "warning"}>
+                            {school.is_active ? "Active" : "Inactive"}
+                          </Badge>
+                          <Badge>{school.subscription_status ?? "No subscription"}</Badge>
+                          <Badge>{planName}</Badge>
+                        </div>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          {school.student_count} students / {school.teacher_count} teachers / {school.class_count} classes
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Last activity: {formatDateTime(school.last_activity_at)}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="secondary" onClick={() => onOpenSchool(schoolRow)}>
+                          Open admin workspace
+                        </Button>
+                        <Button variant="secondary" onClick={() => toggleSchool(schoolRow)}>
+                          {school.is_active ? "Deactivate" : "Activate"}
+                        </Button>
+                        <Button variant="danger" onClick={() => void archiveSchool(schoolRow)}>
+                          Archive
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "schools") {
+    return (
+      <div className="space-y-6">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Schools" value={data.counts.schools.toLocaleString()} sub={`${activeSchools} active`} />
+          <StatCard label="Subscriptions" value={currentSubscriptions.length.toLocaleString()} />
+          <StatCard label="Students" value={totalStudents.toLocaleString()} />
+          <StatCard label="Teachers" value={totalTeachers.toLocaleString()} />
+        </div>
+
+        <Panel title="Provision a School" description="Calls the deployed `provision-school` edge function.">
+          <form className="grid gap-4 lg:grid-cols-2" onSubmit={submitSchool}>
+            <Field label="School name">
+              <Input
+                value={schoolForm.school_name}
+                onChange={(event) => setSchoolForm((prev) => ({ ...prev, school_name: event.target.value }))}
+                required
+              />
+            </Field>
+            <Field label="Slug">
+              <Input
+                value={schoolForm.slug}
+                onChange={(event) => setSchoolForm((prev) => ({ ...prev, slug: event.target.value }))}
+                placeholder="auto-generated if blank"
+              />
+            </Field>
+            <Field label="Timezone">
+              <Input
+                value={schoolForm.timezone}
+                onChange={(event) => setSchoolForm((prev) => ({ ...prev, timezone: event.target.value }))}
+                required
+              />
+            </Field>
+            <Field label="Subscription plan">
+              <Select
+                value={schoolForm.plan_id}
+                onChange={(event) => setSchoolForm((prev) => ({ ...prev, plan_id: event.target.value }))}
+                required
+              >
+                {data.plans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>
+                    {plan.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Admin first name">
+              <Input
+                value={schoolForm.admin_first_name}
+                onChange={(event) => setSchoolForm((prev) => ({ ...prev, admin_first_name: event.target.value }))}
+                required
+              />
+            </Field>
+            <Field label="Admin last name">
+              <Input
+                value={schoolForm.admin_last_name}
+                onChange={(event) => setSchoolForm((prev) => ({ ...prev, admin_last_name: event.target.value }))}
+              />
+            </Field>
+            <Field label="Admin email">
+              <Input
+                type="email"
+                value={schoolForm.admin_email}
+                onChange={(event) => setSchoolForm((prev) => ({ ...prev, admin_email: event.target.value }))}
+                required
+              />
+            </Field>
+            <div className="lg:col-span-2">
+              <Button type="submit" disabled={busy}>
+                <Plus className="w-4 h-4" />
+                {busy ? "Provisioning..." : "Provision school"}
+              </Button>
+            </div>
+          </form>
+        </Panel>
+
+        <Panel title="Schools" description="Live rows from `schools`, `school_subscriptions`, and usage stats.">
+          <div className="space-y-3">
+            {data.stats.length === 0 ? (
+              <EmptyState message="No schools found yet." />
+            ) : (
+              data.stats.map((school) => (
+                <div key={school.school_id} className="rounded-2xl border border-border bg-muted/30 p-4">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-lg font-bold">{school.school_name}</h3>
+                        <Badge tone={school.is_active ? "success" : "warning"}>
+                          {school.is_active ? "Active" : "Inactive"}
+                        </Badge>
+                        <Badge>{school.subscription_status ?? "No subscription"}</Badge>
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        {school.student_count} students · {school.teacher_count} teachers · {school.class_count} classes
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Last activity: {formatDateTime(school.last_activity_at)}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="secondary" onClick={() => toggleSchool(data.schools.find((row) => row.id === school.school_id) ?? {
+                        id: school.school_id,
+                        name: school.school_name,
+                        slug: "",
+                        timezone: "UTC",
+                        is_active: school.is_active,
+                      })}>
+                        {school.is_active ? "Deactivate" : "Activate"}
+                      </Button>
+                      <Button
+                        variant="danger"
+                        onClick={() => {
+                          const row = data.schools.find((item) => item.id === school.school_id);
+                          if (row) {
+                            void archiveSchool(row);
+                          }
+                        }}
+                      >
+                        Archive
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "settings") {
+    return (
+      <div className="space-y-6">
+        <Panel title="Platform Settings" description="Direct writes to `platform_settings` for super admins only.">
+          <form className="grid gap-4 lg:grid-cols-[240px_1fr_auto]" onSubmit={saveSetting}>
+            <Field label="Key">
+              <Input
+                value={settingForm.key}
+                onChange={(event) => setSettingForm((prev) => ({ ...prev, key: event.target.value }))}
+                required
+              />
+            </Field>
+            <Field label="JSON value">
+              <TextArea
+                rows={4}
+                value={settingForm.value}
+                onChange={(event) => setSettingForm((prev) => ({ ...prev, value: event.target.value }))}
+              />
+            </Field>
+            <div className="flex items-end">
+              <Button type="submit" disabled={busy}>
+                Save
+              </Button>
+            </div>
+          </form>
+          <div className="mt-6 space-y-3">
+            {data.settings.length === 0 ? (
+              <EmptyState message="No platform settings rows yet." />
+            ) : (
+              data.settings.map((setting) => (
+                <div key={setting.key} className="rounded-2xl border border-border bg-muted/30 p-4">
+                  <p className="text-sm font-semibold">{setting.key}</p>
+                  <pre className="mt-2 overflow-x-auto text-xs text-muted-foreground">
+                    {JSON.stringify(setting.value, null, 2)}
+                  </pre>
+                </div>
+              ))
+            )}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Schools" value={data.stats.length} sub={`${activeSchools} active`} />
+        <StatCard label="Students" value={totalStudents.toLocaleString()} />
+        <StatCard label="Teachers" value={totalTeachers.toLocaleString()} />
+        <StatCard label="Plans" value={data.plans.length} />
+      </div>
+      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+        <Panel title="School Activity" description="Usage stats from `get_school_usage_stats()`.">
+          <div className="space-y-3">
+            {data.stats.slice(0, 8).map((row) => (
+              <div key={row.school_id} className="flex items-center justify-between rounded-2xl bg-muted/30 p-4">
+                <div>
+                  <p className="font-semibold">{row.school_name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {row.student_count} students · {row.teacher_count} teachers
+                  </p>
+                </div>
+                <Badge tone={row.is_active ? "success" : "warning"}>{row.subscription_status ?? "No plan"}</Badge>
+              </div>
+            ))}
+          </div>
+        </Panel>
+        <Panel title="Subscription Plans" description="Live rows from `subscription_plans`.">
+          <div className="space-y-3">
+            {data.plans.map((plan) => (
+              <div key={plan.id} className="rounded-2xl bg-muted/30 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">{plan.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {currencyFromCents(plan.price_cents)} / {plan.billing_cycle}
+                    </p>
+                  </div>
+                  <Badge tone={plan.is_active ? "success" : "warning"}>
+                    {plan.is_active ? "Active" : "Inactive"}
+                  </Badge>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+function SchoolAdminPortal({
+  view,
+  data,
+  profile,
+  onNotify,
+  onRefresh,
+}: {
+  view: string;
+  data: SchoolAdminData;
+  profile: BasicProfile;
+  onNotify: (kind: "success" | "error" | "info", message: string) => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [daySelection, setDaySelection] = useState<number[]>(data.workingDays.map((item) => item.day_of_week));
+  const [yearForm, setYearForm] = useState({
+    name: "",
+    start_date: "",
+    end_date: "",
+    is_current: true,
+  });
+  const [slotForm, setSlotForm] = useState({
+    label: "",
+    start_time: "",
+    end_time: "",
+    sort_order: String(data.timeSlots.length + 1),
+  });
+  const [gradeForm, setGradeForm] = useState({
+    name: "",
+    sort_order: String(data.gradeLevels.length + 1),
+  });
+  const [subjectForm, setSubjectForm] = useState({
+    name: "",
+    code: "",
+  });
+  const [classForm, setClassForm] = useState({
+    name: "",
+    grade_level_id: data.gradeLevels[0]?.id ?? "",
+    academic_year_id: data.academicYears.find((item) => item.is_current)?.id ?? data.academicYears[0]?.id ?? "",
+  });
+  const [teacherForm, setTeacherForm] = useState({
+    full_name: "",
+    email: "",
+    subject_id: data.subjects[0]?.id ?? "",
+    class_id: data.classes[0]?.id ?? "",
+  });
+  const [studentForm, setStudentForm] = useState({
+    full_name: "",
+    email: "",
+    class_id: data.classes[0]?.id ?? "",
+    parent_name: "",
+    parent_email: "",
+  });
+  const [timetableForm, setTimetableForm] = useState({
+    academic_year_id: data.academicYears.find((item) => item.is_current)?.id ?? data.academicYears[0]?.id ?? "",
+    working_day_id: data.workingDays[0]?.id ?? "",
+    time_slot_id: data.timeSlots[0]?.id ?? "",
+    class_id: data.classes[0]?.id ?? "",
+    subject_id: data.subjects[0]?.id ?? "",
+    teacher_id: data.teachers[0]?.userId ?? "",
+  });
+  const [announcementForm, setAnnouncementForm] = useState({
+    title: "",
+    body: "",
+    target_type: "school",
+    target_role: "student",
+    target_id: data.classes[0]?.id ?? "",
+  });
+  const [messageForm, setMessageForm] = useState({
+    recipient_id: data.recipientOptions[0]?.id ?? "",
+    subject: "",
+    body: "",
+  });
+
+  useEffect(() => {
+    setDaySelection(data.workingDays.map((item) => item.day_of_week));
+  }, [data.workingDays]);
+
+  const classMap = byId(data.classes);
+  const subjectMap = byId(data.subjects);
+  const currentYearId = data.academicYears.find((item) => item.is_current)?.id ?? data.academicYears[0]?.id;
+
+  const runAction = async (work: () => Promise<void>, successMessage: string) => {
+    try {
+      setBusy(true);
+      await work();
+      onNotify("success", successMessage);
+      await onRefresh();
+    } catch (error) {
+      onNotify("error", error instanceof Error ? error.message : "Action failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveWorkingDays = () =>
+    runAction(async () => {
+      unwrap(await supabase.from("working_days").delete().eq("school_id", data.school.id));
+      if (daySelection.length > 0) {
+        unwrap(
+          await supabase.from("working_days").insert(
+            daySelection.map((day) => ({
+              school_id: data.school.id,
+              day_of_week: day,
+              label: dayLabel(day),
+            })),
+          ),
+        );
+      }
+    }, "Working days saved.");
+
+  const createAcademicYear = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      if (yearForm.is_current) {
+        unwrap(
+          await supabase.from("academic_years").update({ is_current: false }).eq("school_id", data.school.id),
+        );
+      }
+      unwrap(
+        await supabase.from("academic_years").insert({
+          school_id: data.school.id,
+          name: yearForm.name,
+          start_date: yearForm.start_date,
+          end_date: yearForm.end_date,
+          is_current: yearForm.is_current,
+        }),
+      );
+      setYearForm({ name: "", start_date: "", end_date: "", is_current: true });
+    }, "Academic year created.");
+  };
+
+  const createTimeSlot = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("time_slots").insert({
+          school_id: data.school.id,
+          label: slotForm.label,
+          start_time: slotForm.start_time,
+          end_time: slotForm.end_time,
+          sort_order: Number(slotForm.sort_order),
+        }),
+      );
+      setSlotForm({ label: "", start_time: "", end_time: "", sort_order: String(data.timeSlots.length + 2) });
+    }, "Time slot created.");
+  };
+
+  const createGrade = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("grade_levels").insert({
+          school_id: data.school.id,
+          name: gradeForm.name,
+          sort_order: Number(gradeForm.sort_order),
+        }),
+      );
+      setGradeForm({ name: "", sort_order: String(data.gradeLevels.length + 2) });
+    }, "Grade level created.");
+  };
+
+  const createSubject = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("subjects").insert({
+          school_id: data.school.id,
+          name: subjectForm.name,
+          code: subjectForm.code || null,
+        }),
+      );
+      setSubjectForm({ name: "", code: "" });
+    }, "Subject created.");
+  };
+
+  const createClass = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("classes").insert({
+          school_id: data.school.id,
+          name: classForm.name,
+          grade_level_id: classForm.grade_level_id,
+          academic_year_id: classForm.academic_year_id,
+        }),
+      );
+      setClassForm((prev) => ({ ...prev, name: "" }));
+    }, "Class created.");
+  };
+
+  const inviteTeacher = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      const { first_name, last_name } = parseName(teacherForm.full_name);
+      const response = await invokeFunctionJson<{ user_id: string }>("invite-user", {
+        school_id: data.school.id,
+        email: teacherForm.email,
+        role: "teacher",
+        first_name,
+        last_name,
+      });
+      if (teacherForm.subject_id) {
+        unwrap(
+          await supabase.from("teacher_subject_assignments").insert({
+            school_id: data.school.id,
+            teacher_id: response.user_id,
+            subject_id: teacherForm.subject_id,
+            class_id: teacherForm.class_id || null,
+          }),
+        );
+      }
+      setTeacherForm({
+        full_name: "",
+        email: "",
+        subject_id: data.subjects[0]?.id ?? "",
+        class_id: data.classes[0]?.id ?? "",
+      });
+    }, "Teacher invited and assignment saved.");
+  };
+
+  const inviteStudent = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      const parsedStudent = parseName(studentForm.full_name);
+      const studentResponse = await invokeFunctionJson<{ user_id: string }>("invite-user", {
+        school_id: data.school.id,
+        email: studentForm.email,
+        role: "student",
+        first_name: parsedStudent.first_name,
+        last_name: parsedStudent.last_name,
+      });
+      unwrap(
+        await supabase.from("class_enrollments").insert({
+          school_id: data.school.id,
+          class_id: studentForm.class_id,
+          student_id: studentResponse.user_id,
+        }),
+      );
+      if (studentForm.parent_email.trim()) {
+        const parsedParent = parseName(studentForm.parent_name || studentForm.parent_email);
+        const parentResponse = await invokeFunctionJson<{ user_id: string }>("invite-user", {
+          school_id: data.school.id,
+          email: studentForm.parent_email,
+          role: "parent",
+          first_name: parsedParent.first_name,
+          last_name: parsedParent.last_name,
+        });
+        unwrap(
+          await supabase.from("parent_student_links").insert({
+            school_id: data.school.id,
+            parent_id: parentResponse.user_id,
+            student_id: studentResponse.user_id,
+            relationship: "parent",
+          }),
+        );
+      }
+      setStudentForm({
+        full_name: "",
+        email: "",
+        class_id: data.classes[0]?.id ?? "",
+        parent_name: "",
+        parent_email: "",
+      });
+    }, "Student invited and enrollment saved.");
+  };
+
+  const createTimetable = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("timetable_entries").insert({
+          school_id: data.school.id,
+          academic_year_id: timetableForm.academic_year_id,
+          working_day_id: timetableForm.working_day_id,
+          time_slot_id: timetableForm.time_slot_id,
+          class_id: timetableForm.class_id,
+          subject_id: timetableForm.subject_id,
+          teacher_id: timetableForm.teacher_id,
+        }),
+      );
+    }, "Timetable entry saved.");
+  };
+
+  const publishAnnouncement = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      const announcement = unwrap(
+        await supabase
+          .from("announcements")
+          .insert({
+            school_id: data.school.id,
+            author_id: profile.id,
+            title: announcementForm.title,
+            body: announcementForm.body,
+            is_published: true,
+            published_at: new Date().toISOString(),
+          })
+          .select("id,school_id,author_id,title,body,is_published,published_at,created_at")
+          .single(),
+      ) as unknown as Announcement;
+
+      const target =
+        announcementForm.target_type === "role"
+          ? {
+              announcement_id: announcement.id,
+              target_type: "role",
+              target_role: announcementForm.target_role,
+            }
+          : announcementForm.target_type === "class"
+            ? {
+                announcement_id: announcement.id,
+                target_type: "class",
+                target_id: announcementForm.target_id,
+              }
+            : {
+                announcement_id: announcement.id,
+                target_type: "school",
+              };
+
+      unwrap(await supabase.from("announcement_targets").insert(target));
+      await invokeFunctionJson("send-announcement", { announcement_id: announcement.id });
+      setAnnouncementForm({
+        title: "",
+        body: "",
+        target_type: "school",
+        target_role: "student",
+        target_id: data.classes[0]?.id ?? "",
+      });
+    }, "Announcement published and notifications queued.");
+  };
+
+  const sendMessage = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      await sendMessageToRecipient({
+        schoolId: data.school.id,
+        senderId: profile.id,
+        recipientId: messageForm.recipient_id,
+        subject: messageForm.subject,
+        body: messageForm.body,
+      });
+      setMessageForm({
+        recipient_id: data.recipientOptions[0]?.id ?? "",
+        subject: "",
+        body: "",
+      });
+    }, "Message sent.");
+  };
+
+  if (view === "academic") {
+    return (
+      <div className="space-y-6">
+        <Panel title="Working Days" description="Replaces the school’s `working_days` rows with the selected set.">
+          <div className="grid gap-3 md:grid-cols-4">
+            {[1, 2, 3, 4, 5, 6].map((day) => (
+              <button
+                key={day}
+                onClick={() =>
+                  setDaySelection((prev) => (prev.includes(day) ? prev.filter((item) => item !== day) : [...prev, day]))
+                }
+                className={`rounded-xl border px-4 py-3 text-left text-sm font-semibold transition ${
+                  daySelection.includes(day)
+                    ? "border-primary bg-secondary text-primary"
+                    : "border-border bg-muted/30 text-muted-foreground"
+                }`}
+              >
+                {dayLabel(day)}
+              </button>
+            ))}
+          </div>
+          <div className="mt-4">
+            <Button onClick={saveWorkingDays} disabled={busy}>
+              Save working days
+            </Button>
+          </div>
+        </Panel>
+
+        <div className="grid gap-6 xl:grid-cols-2">
+          <Panel title="Academic Years">
+            <form className="grid gap-4" onSubmit={createAcademicYear}>
+              <Field label="Name">
+                <Input value={yearForm.name} onChange={(event) => setYearForm((prev) => ({ ...prev, name: event.target.value }))} required />
+              </Field>
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Start date">
+                  <Input type="date" value={yearForm.start_date} onChange={(event) => setYearForm((prev) => ({ ...prev, start_date: event.target.value }))} required />
+                </Field>
+                <Field label="End date">
+                  <Input type="date" value={yearForm.end_date} onChange={(event) => setYearForm((prev) => ({ ...prev, end_date: event.target.value }))} required />
+                </Field>
+              </div>
+              <label className="flex items-center gap-3 text-sm font-medium">
+                <input type="checkbox" checked={yearForm.is_current} onChange={(event) => setYearForm((prev) => ({ ...prev, is_current: event.target.checked }))} />
+                Set as current year
+              </label>
+              <Button type="submit" disabled={busy}>Create academic year</Button>
+            </form>
+            <div className="mt-4 space-y-2">
+              {data.academicYears.map((year) => (
+                <div key={year.id} className="rounded-xl bg-muted/30 p-3">
+                  <div className="flex items-center gap-2">
+                    <p className="font-semibold">{year.name}</p>
+                    {year.is_current ? <Badge tone="success">Current</Badge> : null}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {formatDate(year.start_date)} to {formatDate(year.end_date)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel title="Time Slots">
+            <form className="grid gap-4" onSubmit={createTimeSlot}>
+              <Field label="Label">
+                <Input value={slotForm.label} onChange={(event) => setSlotForm((prev) => ({ ...prev, label: event.target.value }))} required />
+              </Field>
+              <div className="grid gap-4 md:grid-cols-3">
+                <Field label="Start">
+                  <Input type="time" value={slotForm.start_time} onChange={(event) => setSlotForm((prev) => ({ ...prev, start_time: event.target.value }))} required />
+                </Field>
+                <Field label="End">
+                  <Input type="time" value={slotForm.end_time} onChange={(event) => setSlotForm((prev) => ({ ...prev, end_time: event.target.value }))} required />
+                </Field>
+                <Field label="Order">
+                  <Input type="number" value={slotForm.sort_order} onChange={(event) => setSlotForm((prev) => ({ ...prev, sort_order: event.target.value }))} required />
+                </Field>
+              </div>
+              <Button type="submit" disabled={busy}>Add time slot</Button>
+            </form>
+            <div className="mt-4 space-y-2">
+              {data.timeSlots.map((slot) => (
+                <div key={slot.id} className="flex items-center justify-between rounded-xl bg-muted/30 p-3">
+                  <div>
+                    <p className="font-semibold">{slot.label}</p>
+                    <p className="text-xs text-muted-foreground">{slot.start_time} to {slot.end_time}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel title="Grade Levels">
+            <form className="grid gap-4" onSubmit={createGrade}>
+              <Field label="Grade name">
+                <Input value={gradeForm.name} onChange={(event) => setGradeForm((prev) => ({ ...prev, name: event.target.value }))} required />
+              </Field>
+              <Field label="Sort order">
+                <Input type="number" value={gradeForm.sort_order} onChange={(event) => setGradeForm((prev) => ({ ...prev, sort_order: event.target.value }))} />
+              </Field>
+              <Button type="submit" disabled={busy}>Add grade</Button>
+            </form>
+            <div className="mt-4 space-y-2">
+              {data.gradeLevels.map((grade) => (
+                <div key={grade.id} className="rounded-xl bg-muted/30 p-3 font-semibold">
+                  {grade.name}
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel title="Subjects">
+            <form className="grid gap-4" onSubmit={createSubject}>
+              <Field label="Subject name">
+                <Input value={subjectForm.name} onChange={(event) => setSubjectForm((prev) => ({ ...prev, name: event.target.value }))} required />
+              </Field>
+              <Field label="Code">
+                <Input value={subjectForm.code} onChange={(event) => setSubjectForm((prev) => ({ ...prev, code: event.target.value }))} />
+              </Field>
+              <Button type="submit" disabled={busy}>Add subject</Button>
+            </form>
+            <div className="mt-4 space-y-2">
+              {data.subjects.map((subject) => (
+                <div key={subject.id} className="rounded-xl bg-muted/30 p-3">
+                  <p className="font-semibold">{subject.name}</p>
+                  <p className="text-xs text-muted-foreground">{subject.code || "No code"}</p>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        </div>
+
+        <Panel title="Classes">
+          <form className="grid gap-4 lg:grid-cols-4" onSubmit={createClass}>
+            <Field label="Class name">
+              <Input value={classForm.name} onChange={(event) => setClassForm((prev) => ({ ...prev, name: event.target.value }))} required />
+            </Field>
+            <Field label="Grade level">
+              <Select value={classForm.grade_level_id} onChange={(event) => setClassForm((prev) => ({ ...prev, grade_level_id: event.target.value }))}>
+                {data.gradeLevels.map((grade) => (
+                  <option key={grade.id} value={grade.id}>{grade.name}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Academic year">
+              <Select value={classForm.academic_year_id} onChange={(event) => setClassForm((prev) => ({ ...prev, academic_year_id: event.target.value }))}>
+                {data.academicYears.map((year) => (
+                  <option key={year.id} value={year.id}>{year.name}</option>
+                ))}
+              </Select>
+            </Field>
+            <div className="flex items-end">
+              <Button type="submit" disabled={busy}>Create class</Button>
+            </div>
+          </form>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {data.classes.map((item) => (
+              <div key={item.id} className="rounded-xl bg-muted/30 p-4">
+                <p className="font-semibold">{item.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {data.gradeLevels.find((grade) => grade.id === item.grade_level_id)?.name ?? "Unknown grade"} ·{" "}
+                  {data.academicYears.find((year) => year.id === item.academic_year_id)?.name ?? "Unknown year"}
+                </p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "teachers") {
+    return (
+      <div className="space-y-6">
+        <Panel title="Invite Teacher" description="Calls `invite-user`, then inserts `teacher_subject_assignments`.">
+          <form className="grid gap-4 lg:grid-cols-4" onSubmit={inviteTeacher}>
+            <Field label="Full name">
+              <Input value={teacherForm.full_name} onChange={(event) => setTeacherForm((prev) => ({ ...prev, full_name: event.target.value }))} required />
+            </Field>
+            <Field label="Email">
+              <Input type="email" value={teacherForm.email} onChange={(event) => setTeacherForm((prev) => ({ ...prev, email: event.target.value }))} required />
+            </Field>
+            <Field label="Subject">
+              <Select value={teacherForm.subject_id} onChange={(event) => setTeacherForm((prev) => ({ ...prev, subject_id: event.target.value }))}>
+                {data.subjects.map((subject) => (
+                  <option key={subject.id} value={subject.id}>{subject.name}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Class">
+              <Select value={teacherForm.class_id} onChange={(event) => setTeacherForm((prev) => ({ ...prev, class_id: event.target.value }))}>
+                {data.classes.map((item) => (
+                  <option key={item.id} value={item.id}>{item.name}</option>
+                ))}
+              </Select>
+            </Field>
+            <div className="lg:col-span-4">
+              <Button type="submit" disabled={busy}><UserPlus className="w-4 h-4" />Invite teacher</Button>
+            </div>
+          </form>
+        </Panel>
+        <Panel title="Teachers">
+          <div className="space-y-3">
+            {data.teachers.map((teacher) => (
+              <div key={teacher.userId} className="rounded-2xl bg-muted/30 p-4">
+                <p className="font-semibold">{teacher.name}</p>
+                <p className="text-xs text-muted-foreground">{teacher.email}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {teacher.assignments.length === 0 ? <Badge>No assignments</Badge> : teacher.assignments.map((assignment) => <Badge key={assignment}>{assignment}</Badge>)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "students") {
+    return (
+      <div className="space-y-6">
+        <Panel title="Invite Student" description="Invites the student, enrolls them, and optionally links a parent.">
+          <form className="grid gap-4 lg:grid-cols-4" onSubmit={inviteStudent}>
+            <Field label="Student name">
+              <Input value={studentForm.full_name} onChange={(event) => setStudentForm((prev) => ({ ...prev, full_name: event.target.value }))} required />
+            </Field>
+            <Field label="Student email">
+              <Input type="email" value={studentForm.email} onChange={(event) => setStudentForm((prev) => ({ ...prev, email: event.target.value }))} required />
+            </Field>
+            <Field label="Class">
+              <Select value={studentForm.class_id} onChange={(event) => setStudentForm((prev) => ({ ...prev, class_id: event.target.value }))}>
+                {data.classes.map((item) => (
+                  <option key={item.id} value={item.id}>{item.name}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Parent name">
+              <Input value={studentForm.parent_name} onChange={(event) => setStudentForm((prev) => ({ ...prev, parent_name: event.target.value }))} />
+            </Field>
+            <Field label="Parent email">
+              <Input type="email" value={studentForm.parent_email} onChange={(event) => setStudentForm((prev) => ({ ...prev, parent_email: event.target.value }))} />
+            </Field>
+            <div className="lg:col-span-4">
+              <Button type="submit" disabled={busy}><UserPlus className="w-4 h-4" />Invite student</Button>
+            </div>
+          </form>
+        </Panel>
+
+        <Panel
+          title="Students"
+          action={
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={() => void downloadExport("students", data.school.id)}>
+                <Download className="w-4 h-4" />
+                Export students
+              </Button>
+              <Button variant="secondary" onClick={() => void downloadExport("final_grades", data.school.id, currentYearId)}>
+                <Download className="w-4 h-4" />
+                Export grades
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-3">
+            {data.students.map((student) => (
+              <div key={student.userId} className="rounded-2xl bg-muted/30 p-4">
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <p className="font-semibold">{student.name}</p>
+                    <p className="text-xs text-muted-foreground">{student.email}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge>{student.className}</Badge>
+                    <Badge tone={student.status === "active" ? "success" : "warning"}>{student.status}</Badge>
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Parents: {student.parents.length > 0 ? student.parents.join(", ") : "Not linked yet"}
+                </p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "timetable") {
+    return (
+      <div className="space-y-6">
+        <Panel title="Add Timetable Entry" description="Direct insert into `timetable_entries`.">
+          <form className="grid gap-4 lg:grid-cols-3" onSubmit={createTimetable}>
+            <Field label="Academic year">
+              <Select value={timetableForm.academic_year_id} onChange={(event) => setTimetableForm((prev) => ({ ...prev, academic_year_id: event.target.value }))}>
+                {data.academicYears.map((year) => (
+                  <option key={year.id} value={year.id}>{year.name}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Working day">
+              <Select value={timetableForm.working_day_id} onChange={(event) => setTimetableForm((prev) => ({ ...prev, working_day_id: event.target.value }))}>
+                {data.workingDays.map((day) => (
+                  <option key={day.id} value={day.id}>{day.label}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Time slot">
+              <Select value={timetableForm.time_slot_id} onChange={(event) => setTimetableForm((prev) => ({ ...prev, time_slot_id: event.target.value }))}>
+                {data.timeSlots.map((slot) => (
+                  <option key={slot.id} value={slot.id}>{slot.label}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Class">
+              <Select value={timetableForm.class_id} onChange={(event) => setTimetableForm((prev) => ({ ...prev, class_id: event.target.value }))}>
+                {data.classes.map((item) => (
+                  <option key={item.id} value={item.id}>{item.name}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Subject">
+              <Select value={timetableForm.subject_id} onChange={(event) => setTimetableForm((prev) => ({ ...prev, subject_id: event.target.value }))}>
+                {data.subjects.map((subject) => (
+                  <option key={subject.id} value={subject.id}>{subject.name}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Teacher">
+              <Select value={timetableForm.teacher_id} onChange={(event) => setTimetableForm((prev) => ({ ...prev, teacher_id: event.target.value }))}>
+                {data.teachers.map((teacher) => (
+                  <option key={teacher.userId} value={teacher.userId}>{teacher.name}</option>
+                ))}
+              </Select>
+            </Field>
+            <div className="lg:col-span-3">
+              <Button type="submit" disabled={busy}>Save timetable entry</Button>
+            </div>
+          </form>
+        </Panel>
+        <Panel title="Current Timetable">
+          <div className="space-y-3">
+            {data.timetable.length === 0 ? (
+              <EmptyState message="No timetable entries yet." />
+            ) : (
+              data.timetable.map((entry) => (
+                <div key={entry.id} className="rounded-2xl bg-muted/30 p-4">
+                  <p className="font-semibold">
+                    {classMap[entry.class_id]?.name ?? "Unknown class"} · {subjectMap[entry.subject_id]?.name ?? "Unknown subject"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {data.workingDays.find((day) => day.id === entry.working_day_id)?.label ?? "Day"} ·{" "}
+                    {data.timeSlots.find((slot) => slot.id === entry.time_slot_id)?.label ?? "Slot"} ·{" "}
+                    {data.teachers.find((teacher) => teacher.userId === entry.teacher_id)?.name ?? "Teacher"}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "announcements") {
+    return (
+      <div className="space-y-6">
+        <Panel title="Publish Announcement" description="Inserts into `announcements`, creates one target row, then invokes `send-announcement`.">
+          <form className="grid gap-4 lg:grid-cols-2" onSubmit={publishAnnouncement}>
+            <Field label="Title">
+              <Input value={announcementForm.title} onChange={(event) => setAnnouncementForm((prev) => ({ ...prev, title: event.target.value }))} required />
+            </Field>
+            <Field label="Audience type">
+              <Select value={announcementForm.target_type} onChange={(event) => setAnnouncementForm((prev) => ({ ...prev, target_type: event.target.value }))}>
+                <option value="school">Whole school</option>
+                <option value="role">Role</option>
+                <option value="class">Class</option>
+              </Select>
+            </Field>
+            {announcementForm.target_type === "role" ? (
+              <Field label="Role">
+                <Select value={announcementForm.target_role} onChange={(event) => setAnnouncementForm((prev) => ({ ...prev, target_role: event.target.value }))}>
+                  <option value="teacher">Teachers</option>
+                  <option value="student">Students</option>
+                  <option value="parent">Parents</option>
+                  <option value="school_admin">School admins</option>
+                </Select>
+              </Field>
+            ) : null}
+            {announcementForm.target_type === "class" ? (
+              <Field label="Class">
+                <Select value={announcementForm.target_id} onChange={(event) => setAnnouncementForm((prev) => ({ ...prev, target_id: event.target.value }))}>
+                  {data.classes.map((item) => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+                </Select>
+              </Field>
+            ) : null}
+            <div className="lg:col-span-2">
+              <Field label="Body">
+                <TextArea rows={5} value={announcementForm.body} onChange={(event) => setAnnouncementForm((prev) => ({ ...prev, body: event.target.value }))} required />
+              </Field>
+            </div>
+            <div className="lg:col-span-2">
+              <Button type="submit" disabled={busy}><Megaphone className="w-4 h-4" />Publish announcement</Button>
+            </div>
+          </form>
+        </Panel>
+        <Panel title="Published Announcements">
+          <div className="space-y-3">
+            {data.announcements.map((announcement) => (
+              <div key={announcement.item.id} className="rounded-2xl bg-muted/30 p-4">
+                <div className="flex items-center gap-2">
+                  <p className="font-semibold">{announcement.item.title}</p>
+                  <Badge>{announcement.audience}</Badge>
+                </div>
+                <p className="mt-2 text-sm text-foreground">{announcement.item.body}</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {announcement.authorName} · {formatDateTime(announcement.item.published_at || announcement.item.created_at)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "messages") {
+    return (
+      <div className="space-y-6">
+        <Panel title="Compose Message" description="Direct insert into `messages` and `message_recipients`.">
+          <form className="grid gap-4 lg:grid-cols-2" onSubmit={sendMessage}>
+            <Field label="Recipient">
+              <Select value={messageForm.recipient_id} onChange={(event) => setMessageForm((prev) => ({ ...prev, recipient_id: event.target.value }))}>
+                {data.recipientOptions.map((recipient) => (
+                  <option key={recipient.id} value={recipient.id}>{recipient.label}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Subject">
+              <Input value={messageForm.subject} onChange={(event) => setMessageForm((prev) => ({ ...prev, subject: event.target.value }))} />
+            </Field>
+            <div className="lg:col-span-2">
+              <Field label="Message">
+                <TextArea rows={5} value={messageForm.body} onChange={(event) => setMessageForm((prev) => ({ ...prev, body: event.target.value }))} required />
+              </Field>
+            </div>
+            <div className="lg:col-span-2">
+              <Button type="submit" disabled={busy}><Send className="w-4 h-4" />Send message</Button>
+            </div>
+          </form>
+        </Panel>
+
+        <Panel title="Inbox and Sent Items">
+          <div className="space-y-3">
+            {data.messages.length === 0 ? (
+              <EmptyState message="No visible messages yet." />
+            ) : (
+              data.messages.map((message) => (
+                <div key={message.item.id} className="rounded-2xl bg-muted/30 p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-semibold">{message.item.subject || "No subject"}</p>
+                    <Badge>{message.senderName}</Badge>
+                  </div>
+                  <p className="mt-2 text-sm">{message.item.body}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    To: {message.recipients.map((recipient) => recipient.label).join(", ") || "No recipients"} ·{" "}
+                    {formatDateTime(message.item.created_at)}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Teachers" value={data.teachers.length} />
+        <StatCard label="Students" value={data.students.length} />
+        <StatCard label="Classes" value={data.classes.length} />
+        <StatCard label="Plan" value={data.subscription?.status ?? "No plan"} />
+      </div>
+      <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+        <Panel title="School Snapshot">
+          <div className="space-y-3 text-sm">
+            <p><span className="font-semibold">School:</span> {data.school.name}</p>
+            <p><span className="font-semibold">Timezone:</span> {data.school.timezone}</p>
+            <p><span className="font-semibold">Current year:</span> {data.academicYears.find((item) => item.is_current)?.name ?? "Not set"}</p>
+            <p><span className="font-semibold">Subscription:</span> {data.subscription?.status ?? "Unknown"}</p>
+            <p><span className="font-semibold">Recent activity:</span> {formatDateTime(data.usageStat?.last_activity_at)}</p>
+          </div>
+        </Panel>
+        <Panel
+          title="Recent Announcements"
+          action={
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={() => void downloadExport("students", data.school.id)}>
+                <Download className="w-4 h-4" />
+                Students CSV
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-3">
+            {data.announcements.slice(0, 4).map((announcement) => (
+              <div key={announcement.item.id} className="rounded-2xl bg-muted/30 p-4">
+                <div className="flex items-center gap-2">
+                  <p className="font-semibold">{announcement.item.title}</p>
+                  <Badge>{announcement.audience}</Badge>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {announcement.authorName} · {formatDateTime(announcement.item.published_at || announcement.item.created_at)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+      <Panel title="Settings Note">
+        <p className="text-sm text-muted-foreground">
+          Your schema currently allows only super admins to update rows in `schools`, so I kept school-level settings
+          read-only in the live app for now. If you want school admins to edit `schools.settings`, we should add and
+          apply a follow-up migration that narrows their write access to the settings JSON instead of the full school row.
+        </p>
+      </Panel>
+    </div>
+  );
+}
+
+function TeacherPortal({
+  view,
+  data,
+  profile,
+  onNotify,
+  onRefresh,
+}: {
+  view: string;
+  data: TeacherData;
+  profile: BasicProfile;
+  onNotify: (kind: "success" | "error" | "info", message: string) => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [lessonForm, setLessonForm] = useState({
+    title: "",
+    class_id: data.assignments.find((item) => item.class_id)?.class_id ?? data.classes[0]?.id ?? "",
+    subject_id: data.assignments[0]?.subject_id ?? data.subjects[0]?.id ?? "",
+    lesson_date: "",
+    description: "",
+    video_url: "",
+  });
+  const [homeworkForm, setHomeworkForm] = useState({
+    title: "",
+    lesson_id: data.lessons[0]?.id ?? "",
+    due_date: "",
+  });
+  const [homeworkQuestionForm, setHomeworkQuestionForm] = useState({
+    homework_id: data.homework[0]?.item.id ?? "",
+    question_text: "",
+    opt_a: "",
+    opt_b: "",
+    opt_c: "",
+    opt_d: "",
+    correct: "a",
+  });
+  const [testForm, setTestForm] = useState({
+    title: "",
+    class_id: data.assignments.find((item) => item.class_id)?.class_id ?? data.classes[0]?.id ?? "",
+    subject_id: data.assignments[0]?.subject_id ?? data.subjects[0]?.id ?? "",
+    test_date: "",
+    duration_minutes: "60",
+    kind: "monthly",
+  });
+  const [testQuestionForm, setTestQuestionForm] = useState({
+    test_id: data.tests[0]?.item.id ?? "",
+    question_text: "",
+    opt_a: "",
+    opt_b: "",
+    opt_c: "",
+    opt_d: "",
+    correct: "a",
+  });
+  const [announcementForm, setAnnouncementForm] = useState({
+    class_id: data.assignments.find((item) => item.class_id)?.class_id ?? data.classes[0]?.id ?? "",
+    title: "",
+    body: "",
+  });
+  const [messageForm, setMessageForm] = useState({
+    recipient_id: data.recipientOptions[0]?.id ?? "",
+    subject: "",
+    body: "",
+  });
+
+  const classMap = byId(data.classes);
+  const subjectMap = byId(data.subjects);
+
+  const runAction = async (work: () => Promise<void>, successMessage: string) => {
+    try {
+      setBusy(true);
+      await work();
+      onNotify("success", successMessage);
+      await onRefresh();
+    } catch (error) {
+      onNotify("error", error instanceof Error ? error.message : "Action failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createLesson = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("lessons").insert({
+          school_id: data.school.id,
+          class_id: lessonForm.class_id,
+          subject_id: lessonForm.subject_id,
+          teacher_id: profile.id,
+          title: lessonForm.title,
+          description: lessonForm.description || null,
+          video_url: lessonForm.video_url || null,
+          lesson_date: lessonForm.lesson_date,
+        }),
+      );
+      setLessonForm((prev) => ({
+        ...prev,
+        title: "",
+        lesson_date: "",
+        description: "",
+        video_url: "",
+      }));
+    }, "Lesson created.");
+  };
+
+  const createHomework = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("homework").insert({
+          school_id: data.school.id,
+          lesson_id: homeworkForm.lesson_id,
+          title: homeworkForm.title,
+          due_date: homeworkForm.due_date,
+        }),
+      );
+      setHomeworkForm({ title: "", lesson_id: data.lessons[0]?.id ?? "", due_date: "" });
+    }, "Homework created.");
+  };
+
+  const addHomeworkQuestion = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      const question = unwrap(
+        await supabase
+          .from("homework_questions")
+          .insert({
+            homework_id: homeworkQuestionForm.homework_id,
+            question_text: homeworkQuestionForm.question_text,
+            sort_order:
+              (data.homework.find((item) => item.item.id === homeworkQuestionForm.homework_id)?.questions.length ?? 0) + 1,
+          })
+          .select("id,homework_id,question_text,sort_order")
+          .single(),
+      ) as unknown as HomeworkQuestion;
+
+      const options = [
+        { key: "a", value: homeworkQuestionForm.opt_a },
+        { key: "b", value: homeworkQuestionForm.opt_b },
+        { key: "c", value: homeworkQuestionForm.opt_c },
+        { key: "d", value: homeworkQuestionForm.opt_d },
+      ];
+      unwrap(
+        await supabase.from("homework_choices").insert(
+          options.map((option, index) => ({
+            question_id: question.id,
+            choice_text: option.value,
+            is_correct: option.key === homeworkQuestionForm.correct,
+            sort_order: index + 1,
+          })),
+        ),
+      );
+      setHomeworkQuestionForm({
+        homework_id: homeworkQuestionForm.homework_id,
+        question_text: "",
+        opt_a: "",
+        opt_b: "",
+        opt_c: "",
+        opt_d: "",
+        correct: "a",
+      });
+    }, "Homework question saved.");
+  };
+
+  const createTest = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("monthly_tests").insert({
+          school_id: data.school.id,
+          class_id: testForm.class_id,
+          subject_id: testForm.subject_id,
+          teacher_id: profile.id,
+          title: testForm.title,
+          test_date: testForm.test_date,
+          duration_minutes: Number(testForm.duration_minutes),
+          kind: testForm.kind,
+        }),
+      );
+      setTestForm((prev) => ({
+        ...prev,
+        title: "",
+        test_date: "",
+        duration_minutes: "60",
+      }));
+    }, "Test created.");
+  };
+
+  const addTestQuestion = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      const question = unwrap(
+        await supabase
+          .from("test_questions")
+          .insert({
+            test_id: testQuestionForm.test_id,
+            question_text: testQuestionForm.question_text,
+            sort_order:
+              (data.tests.find((item) => item.item.id === testQuestionForm.test_id)?.questions.length ?? 0) + 1,
+          })
+          .select("id,test_id,question_text,sort_order")
+          .single(),
+      ) as unknown as TestQuestion;
+
+      const options = [
+        { key: "a", value: testQuestionForm.opt_a },
+        { key: "b", value: testQuestionForm.opt_b },
+        { key: "c", value: testQuestionForm.opt_c },
+        { key: "d", value: testQuestionForm.opt_d },
+      ];
+      unwrap(
+        await supabase.from("test_choices").insert(
+          options.map((option, index) => ({
+            question_id: question.id,
+            choice_text: option.value,
+            is_correct: option.key === testQuestionForm.correct,
+            sort_order: index + 1,
+          })),
+        ),
+      );
+      setTestQuestionForm({
+        test_id: testQuestionForm.test_id,
+        question_text: "",
+        opt_a: "",
+        opt_b: "",
+        opt_c: "",
+        opt_d: "",
+        correct: "a",
+      });
+    }, "Test question saved.");
+  };
+
+  const publishAnnouncement = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      const announcement = unwrap(
+        await supabase
+          .from("announcements")
+          .insert({
+            school_id: data.school.id,
+            author_id: profile.id,
+            title: announcementForm.title,
+            body: announcementForm.body,
+            is_published: true,
+            published_at: new Date().toISOString(),
+          })
+          .select("id,school_id,author_id,title,body,is_published,published_at,created_at")
+          .single(),
+      ) as unknown as Announcement;
+      unwrap(
+        await supabase.from("announcement_targets").insert({
+          announcement_id: announcement.id,
+          target_type: "class",
+          target_id: announcementForm.class_id,
+        }),
+      );
+      await invokeFunctionJson("send-announcement", { announcement_id: announcement.id });
+      setAnnouncementForm({
+        class_id: data.assignments.find((item) => item.class_id)?.class_id ?? data.classes[0]?.id ?? "",
+        title: "",
+        body: "",
+      });
+    }, "Class announcement published.");
+  };
+
+  const sendMessage = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      await sendMessageToRecipient({
+        schoolId: data.school.id,
+        senderId: profile.id,
+        recipientId: messageForm.recipient_id,
+        subject: messageForm.subject,
+        body: messageForm.body,
+      });
+      setMessageForm({
+        recipient_id: data.recipientOptions[0]
