@@ -527,6 +527,8 @@ type StudentData = {
   enrollments: ClassEnrollment[];
   classes: ClassRecord[];
   subjects: SubjectRecord[];
+  workingDays: WorkingDay[];
+  timeSlots: TimeSlot[];
   lessons: Lesson[];
   homework: HomeworkBundle[];
   tests: TestBundle[];
@@ -608,10 +610,10 @@ const NAV_BY_ROLE: Record<UserRole, NavItem[]> = {
     { id: "announcements", label: "Announcements", icon: <Megaphone className="w-4 h-4" /> },
   ],
   student: [
-    { id: "dashboard", label: "Overview", icon: <Home className="w-4 h-4" /> },
-    { id: "lessons", label: "Lessons", icon: <BookOpen className="w-4 h-4" /> },
+    { id: "dashboard", label: "Dashboard", icon: <Home className="w-4 h-4" /> },
+    { id: "lessons", label: "My Courses", icon: <BookOpen className="w-4 h-4" /> },
     { id: "homework", label: "Homework", icon: <ClipboardList className="w-4 h-4" /> },
-    { id: "tests", label: "Tests", icon: <CheckSquare className="w-4 h-4" /> },
+    { id: "tests", label: "Monthly Tests", icon: <CheckSquare className="w-4 h-4" /> },
     { id: "grades", label: "Grades", icon: <GraduationCap className="w-4 h-4" /> },
     { id: "attendance", label: "Attendance", icon: <Calendar className="w-4 h-4" /> },
     { id: "timetable", label: "Timetable", icon: <Calendar className="w-4 h-4" /> },
@@ -1779,7 +1781,7 @@ async function loadTeacherData(schoolId: string, currentUserId: string) {
 }
 
 async function loadStudentData(schoolId: string, currentUserId: string) {
-  const [school, enrollments, classes, subjects, lessons, homework, tests, grades, attendance, timetable, notifications] =
+  const [school, enrollments, classes, subjects, workingDays, timeSlots, lessons, homework, tests, grades, attendance, timetable, notifications] =
     await Promise.all([
       supabase
         .from("schools")
@@ -1796,6 +1798,8 @@ async function loadStudentData(schoolId: string, currentUserId: string) {
         .select("id,school_id,academic_year_id,grade_level_id,name,created_at")
         .eq("school_id", schoolId),
       supabase.from("subjects").select("id,school_id,name,code").eq("school_id", schoolId),
+      supabase.from("working_days").select("id,school_id,day_of_week,label").eq("school_id", schoolId),
+      supabase.from("time_slots").select("id,school_id,label,start_time,end_time,sort_order").eq("school_id", schoolId),
       supabase
         .from("lessons")
         .select("id,school_id,class_id,subject_id,teacher_id,title,description,video_url,lesson_date,created_at")
@@ -1962,6 +1966,8 @@ async function loadStudentData(schoolId: string, currentUserId: string) {
     enrollments: (unwrap(enrollments) as unknown) as ClassEnrollment[],
     classes: classRows,
     subjects: (unwrap(subjects) as unknown) as SubjectRecord[],
+    workingDays: (unwrap(workingDays) as unknown) as WorkingDay[],
+    timeSlots: (unwrap(timeSlots) as unknown) as TimeSlot[],
     lessons: (unwrap(lessons) as unknown) as Lesson[],
     homework: bundleHomework(
       homeworkRows,
@@ -10537,7 +10543,7 @@ function TeacherPortal({
   );
 }
 
-function StudentPortal({
+function LegacyStudentPortal({
   view,
   data,
   profile,
@@ -10975,6 +10981,876 @@ function StudentPortal({
               </div>
             ))
           )}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function StudentPortal({
+  view,
+  data,
+  profile,
+  onNotify,
+  onRefresh,
+}: {
+  view: string;
+  data: StudentData;
+  profile: BasicProfile;
+  onNotify: (kind: "success" | "error" | "info", message: string) => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [activeHomeworkId, setActiveHomeworkId] = useState<string | null>(null);
+  const [activeTestId, setActiveTestId] = useState<string | null>(null);
+  const [homeworkSelections, setHomeworkSelections] = useState<Record<string, string>>({});
+  const [testSelections, setTestSelections] = useState<Record<string, string>>({});
+  const [messageForm, setMessageForm] = useState({
+    recipient_id: data.recipientOptions[0]?.id ?? "",
+    subject: "",
+    body: "",
+  });
+
+  const classMap = byId(data.classes);
+  const subjectMap = byId(data.subjects);
+  const enrollment = data.enrollments[0] ?? null;
+  const currentClassName = enrollment ? classMap[enrollment.class_id]?.name ?? "Class" : "Class not assigned";
+  const today = new Date();
+
+  const averageNumbers = (values: Array<number | null | undefined>) => {
+    const numbers = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    if (!numbers.length) return null;
+    return Math.round(numbers.reduce((sum, value) => sum + value, 0) / numbers.length);
+  };
+
+  const scoreToLetter = (score: number | null) => {
+    if (score == null) return "Pending";
+    if (score >= 90) return "A";
+    if (score >= 80) return "B+";
+    if (score >= 70) return "B";
+    if (score >= 60) return "C";
+    if (score >= 50) return "D";
+    return "F";
+  };
+
+  const clampPercent = (value: number | null | undefined) => {
+    if (typeof value !== "number" || Number.isNaN(value)) return 0;
+    return Math.max(0, Math.min(100, Math.round(value)));
+  };
+
+  const normalizedDate = (value?: string | null) => {
+    if (!value) return null;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
+
+  const homeworkWithSubmission = data.homework
+    .map((bundle) => ({
+      ...bundle,
+      submission: bundle.submissions.find((submission) => submission.student_id === profile.id) ?? null,
+    }))
+    .sort((a, b) => (normalizedDate(a.item.due_date)?.getTime() ?? 0) - (normalizedDate(b.item.due_date)?.getTime() ?? 0));
+
+  const testsWithSubmission = data.tests
+    .map((bundle) => ({
+      ...bundle,
+      submission: bundle.submissions.find((submission) => submission.student_id === profile.id) ?? null,
+    }))
+    .sort((a, b) => (normalizedDate(a.item.test_date)?.getTime() ?? 0) - (normalizedDate(b.item.test_date)?.getTime() ?? 0));
+
+  const subjectPalette = [
+    "bg-violet-50 text-violet-700 border-violet-100",
+    "bg-emerald-50 text-emerald-700 border-emerald-100",
+    "bg-amber-50 text-amber-700 border-amber-100",
+    "bg-sky-50 text-sky-700 border-sky-100",
+    "bg-rose-50 text-rose-700 border-rose-100",
+  ];
+
+  const courseSummaries = unique(
+    [
+      ...data.lessons.map((lesson) => lesson.subject_id),
+      ...homeworkWithSubmission.map((bundle) => bundle.lesson?.subject_id ?? ""),
+      ...testsWithSubmission.map((bundle) => bundle.item.subject_id),
+      ...data.grades.map((grade) => grade.subject_id),
+    ].filter((subjectId): subjectId is string => Boolean(subjectId)),
+  )
+    .map((subjectId, index) => {
+      const subjectLessons = data.lessons.filter((lesson) => lesson.subject_id === subjectId);
+      const subjectHomework = homeworkWithSubmission.filter((bundle) => bundle.lesson?.subject_id === subjectId);
+      const subjectTests = testsWithSubmission.filter((bundle) => bundle.item.subject_id === subjectId);
+      const subjectGrade = data.grades.find((grade) => grade.subject_id === subjectId) ?? null;
+      const homeworkAverage = averageNumbers(subjectHomework.map((bundle) => bundle.submission?.score ?? null));
+      const testAverage = averageNumbers(subjectTests.map((bundle) => bundle.submission?.score ?? null));
+      const progress =
+        subjectGrade?.grade_value ??
+        averageNumbers([homeworkAverage, testAverage]) ??
+        Math.min(95, Math.max(subjectLessons.length * 14, subjectHomework.length * 18, subjectTests.length * 22, 24));
+
+      return {
+        id: subjectId,
+        name: subjectMap[subjectId]?.name ?? "Subject",
+        tone: subjectPalette[index % subjectPalette.length],
+        lessonsCount: subjectLessons.length,
+        homeworkCount: subjectHomework.length,
+        testCount: subjectTests.length,
+        homeworkAverage,
+        testAverage,
+        progress: clampPercent(progress),
+        grade: subjectGrade,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const pendingHomework = homeworkWithSubmission.filter((bundle) => !bundle.submission);
+  const completedHomework = homeworkWithSubmission.filter((bundle) => bundle.submission);
+  const completedTests = testsWithSubmission.filter((bundle) => bundle.submission);
+  const publishedGrades = data.grades.filter((grade) => grade.grade_value != null || grade.grade_letter);
+  const overallNumeric = averageNumbers(publishedGrades.map((grade) => grade.grade_value)) ?? averageNumbers(courseSummaries.map((course) => course.progress));
+  const overallLetter = scoreToLetter(overallNumeric);
+  const overallPercent = clampPercent(overallNumeric);
+  const gpaValue = overallNumeric == null ? "0.0" : (overallNumeric / 25).toFixed(1);
+  const strongSubjects = courseSummaries.filter((course) => course.progress >= 85).length;
+  const testsThisMonth = testsWithSubmission.filter((bundle) => {
+    const testDate = normalizedDate(bundle.item.test_date);
+    return testDate && testDate.getFullYear() === today.getFullYear() && testDate.getMonth() === today.getMonth();
+  }).length;
+  const presentDays = data.attendance.filter((row) => row.status === "present").length;
+  const absentDays = data.attendance.filter((row) => row.status === "absent").length;
+  const attendanceRate = data.attendance.length ? Math.round((presentDays / data.attendance.length) * 100) : 0;
+  const totalPointsEarned = Math.round(
+    [...completedHomework, ...completedTests].reduce((sum, bundle) => sum + (bundle.submission?.score ?? 0), 0),
+  );
+  const totalPointsTarget = Math.max((completedHomework.length + completedTests.length) * 100, 1000);
+  const totalPointsPercent = Math.round((totalPointsEarned / totalPointsTarget) * 100);
+
+  const monthlyAttendance = Object.values(
+    data.attendance.reduce<Record<string, { label: string; count: number; order: number }>>((acc, row) => {
+      const date = normalizedDate(row.recorded_at);
+      if (!date) return acc;
+      const key = `${date.getFullYear()}-${date.getMonth()}`;
+      const existing = acc[key];
+      if (existing) {
+        existing.count += 1;
+        return acc;
+      }
+      acc[key] = {
+        label: date.toLocaleString(undefined, { month: "short" }),
+        count: 1,
+        order: new Date(date.getFullYear(), date.getMonth(), 1).getTime(),
+      };
+      return acc;
+    }, {}),
+  ).sort((a, b) => a.order - b.order);
+
+  const trendCourses = courseSummaries.slice(0, 5);
+  const trendPolyline =
+    trendCourses.length > 0
+      ? trendCourses
+          .map((course, index) => {
+            const x = trendCourses.length === 1 ? 320 : 36 + index * (560 / Math.max(trendCourses.length - 1, 1));
+            const y = 220 - (course.progress / 100) * 160;
+            return `${x},${y}`;
+          })
+          .join(" ")
+      : "";
+
+  const scheduleDays = [...data.workingDays].sort((a, b) => a.day_of_week - b.day_of_week);
+  const scheduleSlots = [...data.timeSlots].sort(
+    (a, b) => a.sort_order - b.sort_order || a.start_time.localeCompare(b.start_time),
+  );
+  const timetableLookup = data.timetable.reduce<Record<string, TimetableEntry>>((acc, entry) => {
+    acc[`${entry.working_day_id}:${entry.time_slot_id}`] = entry;
+    return acc;
+  }, {});
+
+  const runAction = async (work: () => Promise<void>, successMessage: string) => {
+    try {
+      setBusy(true);
+      await work();
+      onNotify("success", successMessage);
+      await onRefresh();
+    } catch (error) {
+      onNotify("error", error instanceof Error ? error.message : "Action failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitHomework = (bundle: HomeworkBundle) => {
+    void runAction(async () => {
+      const existing = bundle.submissions.find((submission) => submission.student_id === profile.id);
+      if (existing) {
+        throw new Error("This homework is already submitted.");
+      }
+      const missing = bundle.questions.find((question) => !homeworkSelections[question.id]);
+      if (missing) {
+        throw new Error("Answer every question before submitting.");
+      }
+
+      const submission = unwrap(
+        await supabase
+          .from("homework_submissions")
+          .insert({
+            homework_id: bundle.item.id,
+            student_id: profile.id,
+          })
+          .select("id,homework_id,student_id,submitted_at,score,graded_at")
+          .single(),
+      ) as unknown as HomeworkSubmission;
+
+      unwrap(
+        await supabase.from("homework_answers").insert(
+          bundle.questions.map((question) => ({
+            submission_id: submission.id,
+            question_id: question.id,
+            selected_choice_id: homeworkSelections[question.id],
+          })),
+        ),
+      );
+      setActiveHomeworkId(null);
+      setHomeworkSelections({});
+    }, "Homework submitted.");
+  };
+
+  const submitTest = (bundle: TestBundle) => {
+    void runAction(async () => {
+      const existing = bundle.submissions.find((submission) => submission.student_id === profile.id);
+      if (existing) {
+        throw new Error("This test is already submitted.");
+      }
+      const missing = bundle.questions.find((question) => !testSelections[question.id]);
+      if (missing) {
+        throw new Error("Answer every question before submitting.");
+      }
+
+      const submission = unwrap(
+        await supabase
+          .from("test_submissions")
+          .insert({
+            test_id: bundle.item.id,
+            student_id: profile.id,
+          })
+          .select("id,test_id,student_id,submitted_at,score,graded_at")
+          .single(),
+      ) as unknown as TestSubmission;
+
+      unwrap(
+        await supabase.from("test_answers").insert(
+          bundle.questions.map((question) => ({
+            submission_id: submission.id,
+            question_id: question.id,
+            selected_choice_id: testSelections[question.id],
+          })),
+        ),
+      );
+      setActiveTestId(null);
+      setTestSelections({});
+    }, "Test submitted.");
+  };
+
+  const sendMessage = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      await sendMessageToRecipient({
+        schoolId: data.school.id,
+        recipientId: messageForm.recipient_id,
+        subject: messageForm.subject,
+        body: messageForm.body,
+      });
+      setMessageForm({
+        recipient_id: data.recipientOptions[0]?.id ?? "",
+        subject: "",
+        body: "",
+      });
+    }, "Message sent.");
+  };
+
+  if (view === "lessons") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["Student", "My Courses"]}
+          description="See every subject in one place and track how much work has already opened for you."
+        />
+        {courseSummaries.length === 0 ? (
+          <EmptyState message="No courses are visible yet." />
+        ) : (
+          <div className="grid gap-5 xl:grid-cols-2">
+            {courseSummaries.map((course) => (
+              <div
+                key={course.id}
+                className="rounded-[2rem] border border-border bg-card p-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)] transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_24px_60px_rgba(15,23,42,0.12)]"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className={`flex h-14 w-14 items-center justify-center rounded-2xl border ${course.tone}`}>
+                    <BookOpen className="h-6 w-6" />
+                  </div>
+                  <Badge>{course.progress}% progress</Badge>
+                </div>
+                <h4 className="mt-5 text-3xl font-bold text-foreground">{course.name}</h4>
+                <p className="mt-2 text-sm text-muted-foreground">{currentClassName}</p>
+                <div className="mt-6 h-2.5 rounded-full bg-secondary/70">
+                  <div className="h-2.5 rounded-full bg-primary transition-all duration-500" style={{ width: `${course.progress}%` }} />
+                </div>
+                <div className="mt-3 flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">{course.lessonsCount} lessons available</span>
+                  <span className="font-semibold text-primary">{course.grade?.grade_letter ?? scoreToLetter(course.grade?.grade_value ?? course.progress)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <Panel title="Latest course activity" description="Recent lessons across your subjects.">
+          <div className="space-y-3">
+            {data.lessons.length === 0 ? (
+              <EmptyState message="No lessons have been posted yet." />
+            ) : (
+              data.lessons.slice(0, 6).map((lesson) => (
+                <div key={lesson.id} className="rounded-2xl border border-border bg-muted/25 p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge>{subjectMap[lesson.subject_id]?.name ?? "Subject"}</Badge>
+                    <Badge>{classMap[lesson.class_id]?.name ?? "Class"}</Badge>
+                  </div>
+                  <p className="mt-3 text-lg font-bold text-foreground">{lesson.title}</p>
+                  <p className="mt-2 text-sm text-muted-foreground">{lesson.description || "No lesson summary yet."}</p>
+                  <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{formatDate(lesson.lesson_date)}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "homework") {
+    const active = data.homework.find((item) => item.item.id === activeHomeworkId) ?? null;
+    return (
+      <div className="space-y-6">
+        {active ? (
+          <>
+            <SectionTrail
+              items={["Student", "Homework", active.item.title]}
+              description="Finish each question, then send one final submission."
+            />
+            <Panel title={active.item.title} description="Submit your answers once and your score will be updated automatically.">
+              <div className="grid gap-4 lg:grid-cols-3">
+                <StatCard label="Subject" value={subjectMap[active.lesson?.subject_id ?? ""]?.name ?? "Subject"} />
+                <StatCard label="Due" value={formatDate(active.item.due_date)} />
+                <StatCard label="Questions" value={active.questions.length} />
+              </div>
+              <div className="mt-6 space-y-5">
+                {active.questions.map((question, index) => (
+                  <div key={question.id} className="rounded-2xl border border-border bg-muted/25 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Question {index + 1}</p>
+                    <p className="mt-2 text-base font-semibold text-foreground">{question.question_text}</p>
+                    <div className="mt-4 space-y-2">
+                      {question.choices.map((choice) => (
+                        <label
+                          key={choice.id}
+                          className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm transition-all ${
+                            homeworkSelections[question.id] === choice.id
+                              ? "border-primary bg-primary/5 shadow-sm"
+                              : "border-border bg-card hover:border-primary/30 hover:bg-background/80"
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name={question.id}
+                            checked={homeworkSelections[question.id] === choice.id}
+                            onChange={() => setHomeworkSelections((prev) => ({ ...prev, [question.id]: choice.id }))}
+                          />
+                          {choice.choice_text}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <div className="flex flex-wrap gap-3">
+                  <Button variant="secondary" onClick={() => setActiveHomeworkId(null)}>
+                    Back
+                  </Button>
+                  <Button onClick={() => submitHomework(active)} disabled={busy}>
+                    Submit homework
+                  </Button>
+                </div>
+              </div>
+            </Panel>
+          </>
+        ) : (
+          <>
+            <SectionTrail
+              items={["Student", "Homework"]}
+              description="Open pending homework from here and keep track of what you have already sent."
+            />
+            <div className="space-y-4">
+              {homeworkWithSubmission.length === 0 ? (
+                <EmptyState message="No homework has been posted yet." />
+              ) : (
+                homeworkWithSubmission.map((item) => (
+                  <div
+                    key={item.item.id}
+                    className="rounded-[2rem] border border-border bg-card p-5 shadow-[0_16px_40px_rgba(15,23,42,0.08)]"
+                  >
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge>{subjectMap[item.lesson?.subject_id ?? ""]?.name ?? "Subject"}</Badge>
+                          <Badge tone={item.submission ? "success" : "warning"}>{item.submission ? "Submitted" : "Pending"}</Badge>
+                        </div>
+                        <h4 className="mt-4 text-3xl font-bold text-foreground">{item.item.title}</h4>
+                        <p className="mt-3 text-sm text-muted-foreground">
+                          Due {formatDate(item.item.due_date)} / {item.questions.length} questions
+                        </p>
+                      </div>
+                      {item.submission ? (
+                        <Badge tone="success">{item.submission.score == null ? "Waiting for score" : `Score ${Math.round(item.submission.score)}%`}</Badge>
+                      ) : (
+                        <Button
+                          onClick={() => {
+                            setHomeworkSelections({});
+                            setActiveHomeworkId(item.item.id);
+                          }}
+                        >
+                          Start
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  if (view === "tests") {
+    const active = data.tests.find((item) => item.item.id === activeTestId) ?? null;
+    return (
+      <div className="space-y-6">
+        {active ? (
+          <>
+            <SectionTrail
+              items={["Student", "Monthly Tests", active.item.title]}
+              description="Answer carefully before sending your test attempt."
+            />
+            <Panel title={active.item.title} description="Submit your answers once and your attempt will be saved automatically.">
+              <div className="grid gap-4 lg:grid-cols-3">
+                <StatCard label="Subject" value={subjectMap[active.item.subject_id]?.name ?? "Subject"} />
+                <StatCard label="Date" value={formatDate(active.item.test_date)} />
+                <StatCard label="Duration" value={`${active.item.duration_minutes} min`} />
+              </div>
+              <div className="mt-6 space-y-5">
+                {active.questions.map((question, index) => (
+                  <div key={question.id} className="rounded-2xl border border-border bg-muted/25 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Question {index + 1}</p>
+                    <p className="mt-2 text-base font-semibold text-foreground">{question.question_text}</p>
+                    <div className="mt-4 space-y-2">
+                      {question.choices.map((choice) => (
+                        <label
+                          key={choice.id}
+                          className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm transition-all ${
+                            testSelections[question.id] === choice.id
+                              ? "border-primary bg-primary/5 shadow-sm"
+                              : "border-border bg-card hover:border-primary/30 hover:bg-background/80"
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name={question.id}
+                            checked={testSelections[question.id] === choice.id}
+                            onChange={() => setTestSelections((prev) => ({ ...prev, [question.id]: choice.id }))}
+                          />
+                          {choice.choice_text}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <div className="flex flex-wrap gap-3">
+                  <Button variant="secondary" onClick={() => setActiveTestId(null)}>
+                    Back
+                  </Button>
+                  <Button onClick={() => submitTest(active)} disabled={busy}>
+                    Submit test
+                  </Button>
+                </div>
+              </div>
+            </Panel>
+          </>
+        ) : (
+          <>
+            <SectionTrail
+              items={["Student", "Monthly Tests"]}
+              description="See upcoming tests, open one when you are ready, and watch your completed scores collect here."
+            />
+            <div className="space-y-4">
+              {testsWithSubmission.length === 0 ? (
+                <EmptyState message="No tests are available right now." />
+              ) : (
+                testsWithSubmission.map((item) => (
+                  <div
+                    key={item.item.id}
+                    className="rounded-[2rem] border border-border bg-card p-5 shadow-[0_16px_40px_rgba(15,23,42,0.08)]"
+                  >
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge>{subjectMap[item.item.subject_id]?.name ?? "Subject"}</Badge>
+                          <Badge tone={item.submission ? "success" : "default"}>{item.submission ? "Completed" : "Available"}</Badge>
+                        </div>
+                        <h4 className="mt-4 text-3xl font-bold text-foreground">{item.item.title}</h4>
+                        <p className="mt-3 text-sm text-muted-foreground">
+                          {formatDate(item.item.test_date)} / {item.item.duration_minutes} minutes / {item.questions.length} questions
+                        </p>
+                      </div>
+                      {item.submission ? (
+                        <Badge tone="success">{item.submission.score == null ? "Waiting for score" : `Score ${Math.round(item.submission.score)}%`}</Badge>
+                      ) : (
+                        <Button
+                          onClick={() => {
+                            setTestSelections({});
+                            setActiveTestId(item.item.id);
+                          }}
+                        >
+                          Start Test
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  if (view === "grades") {
+    const gradeRows = courseSummaries.map((course) => ({
+      ...course,
+      finalLetter: course.grade?.grade_letter ?? scoreToLetter(course.grade?.grade_value ?? course.progress),
+      status: titleCaseLabel(course.grade?.status ?? "draft"),
+    }));
+
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["Student", "Grades"]}
+          description="Review your homework, test, and final subject scores together."
+        />
+        <div className="grid gap-4 md:grid-cols-3">
+          <StatCard label="GPA" value={gpaValue} />
+          <StatCard label="Published Subjects" value={publishedGrades.length} />
+          <StatCard label="Strong Subjects" value={strongSubjects} sub="A-range progress" />
+        </div>
+        <Panel title="My Grades" description="All current subject results in one table.">
+          {gradeRows.length === 0 ? (
+            <EmptyState message="Grades have not been published yet." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-border text-sm">
+                <thead>
+                  <tr className="text-left text-muted-foreground">
+                    <th className="px-4 py-3 font-semibold">Subject</th>
+                    <th className="px-4 py-3 font-semibold">Homework</th>
+                    <th className="px-4 py-3 font-semibold">Test Score</th>
+                    <th className="px-4 py-3 font-semibold">Final Grade</th>
+                    <th className="px-4 py-3 font-semibold">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {gradeRows.map((row) => (
+                    <tr key={row.id}>
+                      <td className="px-4 py-4 font-semibold text-foreground">{row.name}</td>
+                      <td className="px-4 py-4">{row.homeworkAverage == null ? "-" : `${row.homeworkAverage}%`}</td>
+                      <td className="px-4 py-4">{row.testAverage == null ? "-" : `${row.testAverage}%`}</td>
+                      <td className="px-4 py-4">
+                        <Badge tone={row.finalLetter.startsWith("A") ? "success" : "default"}>{row.finalLetter}</Badge>
+                      </td>
+                      <td className="px-4 py-4">
+                        <Badge tone={row.status.toLowerCase() === "approved" ? "success" : "default"}>{row.status}</Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "attendance") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["Student", "Attendance"]}
+          description="Track your school attendance and watch the pattern by month."
+        />
+        <div className="grid gap-4 md:grid-cols-3">
+          <StatCard label="Present Days" value={presentDays} />
+          <StatCard label="Absent Days" value={absentDays} />
+          <StatCard label="Attendance Rate" value={`${attendanceRate}%`} />
+        </div>
+        <Panel title="Monthly Attendance" description="Each bar shows the number of attendance records in that month.">
+          {monthlyAttendance.length === 0 ? (
+            <EmptyState message="Attendance records have not been added yet." />
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-4">
+              {monthlyAttendance.map((month) => {
+                const maxCount = Math.max(...monthlyAttendance.map((item) => item.count), 1);
+                const height = Math.max(22, Math.round((month.count / maxCount) * 180));
+                return (
+                  <div key={`${month.label}-${month.order}`} className="rounded-2xl border border-border bg-muted/15 p-4">
+                    <div className="flex h-56 items-end justify-center">
+                      <div className="w-28 rounded-t-[1.5rem] bg-rose-300 transition-all duration-500" style={{ height }} />
+                    </div>
+                    <div className="mt-4 flex items-center justify-between text-sm">
+                      <span className="font-semibold text-foreground">{month.label}</span>
+                      <span className="text-muted-foreground">{month.count} days</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "timetable") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["Student", "Timetable"]}
+          description="Review your weekly class schedule in one simple table."
+        />
+        <Panel title="Class Timetable" description={currentClassName}>
+          {scheduleDays.length === 0 || scheduleSlots.length === 0 ? (
+            <EmptyState message="Timetable details are not ready yet." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-border text-sm">
+                <thead>
+                  <tr className="text-left text-muted-foreground">
+                    <th className="px-4 py-3 font-semibold">Time</th>
+                    {scheduleDays.map((day) => (
+                      <th key={day.id} className="px-4 py-3 font-semibold">
+                        {day.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {scheduleSlots.map((slot) => (
+                    <tr key={slot.id}>
+                      <td className="px-4 py-4 font-semibold text-foreground">
+                        {slot.label || `${slot.start_time} - ${slot.end_time}`}
+                      </td>
+                      {scheduleDays.map((day) => {
+                        const entry = timetableLookup[`${day.id}:${slot.id}`];
+                        return (
+                          <td key={`${day.id}-${slot.id}`} className="px-4 py-4">
+                            {entry ? (
+                              <div className="rounded-2xl bg-secondary/45 px-3 py-2">
+                                <p className="font-semibold text-primary">{subjectMap[entry.subject_id]?.name ?? "Subject"}</p>
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "announcements") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["Student", "Announcements"]}
+          description="Read the latest school updates without leaving your workspace."
+        />
+        <div className="space-y-4">
+          {data.announcements.length === 0 ? (
+            <EmptyState message="No announcements have been published yet." />
+          ) : (
+            data.announcements.map((announcement) => (
+              <div
+                key={announcement.item.id}
+                className="rounded-[2rem] border border-border bg-card p-5 shadow-[0_16px_40px_rgba(15,23,42,0.08)]"
+              >
+                <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-secondary/50 text-primary">
+                    <Megaphone className="h-4 w-4" />
+                  </div>
+                  <span>{formatDate(announcement.item.published_at ?? announcement.item.created_at)}</span>
+                  <span>{announcement.authorName}</span>
+                </div>
+                <h4 className="mt-4 text-3xl font-bold text-foreground">{announcement.item.title}</h4>
+                <p className="mt-3 text-base text-muted-foreground">{announcement.item.body}</p>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (view === "messages") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["Student", "Messages"]}
+          description="Keep speaking in the same thread so teacher replies and your follow-ups stay together."
+        />
+        <MessageChatWorkspace
+          currentUserId={profile.id}
+          recipientLabel="teacher"
+          recipientId={messageForm.recipient_id}
+          subject={messageForm.subject}
+          body={messageForm.body}
+          setRecipientId={(value) => setMessageForm((prev) => ({ ...prev, recipient_id: value }))}
+          setSubject={(value) => setMessageForm((prev) => ({ ...prev, subject: value }))}
+          setBody={(value) => setMessageForm((prev) => ({ ...prev, body: value }))}
+          recipientOptions={data.recipientOptions}
+          messages={data.messages}
+          busy={busy}
+          onSend={sendMessage}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <SectionTrail
+        items={["Student", "Dashboard"]}
+        description="Keep an eye on your courses, pending work, test activity, and overall progress from one place."
+      />
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="My Courses" value={courseSummaries.length} />
+        <StatCard label="Pending Homework" value={pendingHomework.length} />
+        <StatCard label="Tests This Month" value={testsThisMonth} />
+        <StatCard label="Overall Grade" value={overallLetter} sub={overallNumeric == null ? "Waiting for published grades" : `${overallPercent}% average`} />
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[1.9fr_0.9fr]">
+        <Panel title="Performance Trend" description="Your subject progress line updates as more work gets graded.">
+          {trendCourses.length === 0 ? (
+            <EmptyState message="Progress will appear here after lessons, tests, or grades are added." />
+          ) : (
+            <svg viewBox="0 0 640 250" className="w-full">
+              <path d="M36 220 H596" stroke="rgba(148,163,184,0.3)" strokeWidth="1.5" />
+              <path d="M36 180 H596" stroke="rgba(148,163,184,0.15)" strokeWidth="1" />
+              <path d="M36 140 H596" stroke="rgba(148,163,184,0.15)" strokeWidth="1" />
+              <path d="M36 100 H596" stroke="rgba(148,163,184,0.15)" strokeWidth="1" />
+              <path d="M36 60 H596" stroke="rgba(148,163,184,0.15)" strokeWidth="1" />
+              <polyline fill="none" stroke="#7c5cbf" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" points={trendPolyline} />
+              {trendCourses.map((course, index) => {
+                const x = trendCourses.length === 1 ? 320 : 36 + index * (560 / Math.max(trendCourses.length - 1, 1));
+                const y = 220 - (course.progress / 100) * 160;
+                return (
+                  <g key={course.id}>
+                    <circle cx={x} cy={y} r="6" fill="#7c5cbf" />
+                    <text x={x} y={242} textAnchor="middle" className="fill-slate-500 text-[12px]">
+                      {course.name}
+                    </text>
+                  </g>
+                );
+              })}
+            </svg>
+          )}
+        </Panel>
+
+        <div className="space-y-5">
+          <Panel title="Upcoming" description="The next homework items that still need your attention.">
+            <div className="space-y-3">
+              {pendingHomework.length === 0 ? (
+                <EmptyState message="Nothing is pending right now." />
+              ) : (
+                pendingHomework.slice(0, 4).map((bundle) => (
+                  <div key={bundle.item.id} className="rounded-2xl bg-secondary/40 px-4 py-3">
+                    <p className="font-semibold text-foreground">{bundle.item.title}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">Due {formatDate(bundle.item.due_date)}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </Panel>
+
+          <Panel title="Total Points Earned" description={currentClassName}>
+            <div className="flex flex-col items-center justify-center py-2">
+              <div
+                className="relative flex h-44 w-44 items-center justify-center rounded-full"
+                style={{
+                  background: `conic-gradient(#7c5cbf ${Math.max(totalPointsPercent, overallPercent)}%, rgba(124,92,191,0.14) 0)`,
+                }}
+              >
+                <div className="flex h-32 w-32 flex-col items-center justify-center rounded-full bg-card text-center shadow-inner">
+                  <p className="text-3xl font-bold text-foreground">{totalPointsEarned}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">out of {totalPointsTarget}</p>
+                </div>
+              </div>
+              <p className="mt-5 text-lg font-bold text-foreground">Average score</p>
+              <p className="text-sm text-muted-foreground">{overallPercent}% across homework and tests</p>
+            </div>
+          </Panel>
+        </div>
+      </div>
+
+      <Panel title="School Updates" description="Recent notifications and announcements for your account.">
+        <div className="grid gap-4 xl:grid-cols-2">
+          <div className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Notifications</p>
+            {data.notifications.length === 0 ? (
+              <EmptyState message="No notifications yet." />
+            ) : (
+              data.notifications.slice(0, 3).map((notification) => (
+                <div key={notification.id} className="rounded-2xl border border-border bg-muted/25 p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-secondary/50 text-primary">
+                      <Bell className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-foreground">{notification.title || "Notification"}</p>
+                      <p className="mt-1 text-sm text-muted-foreground">{notification.body || "No content"}</p>
+                      <p className="mt-2 text-xs text-muted-foreground">{formatDateTime(notification.created_at)}</p>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Announcements</p>
+            {data.announcements.length === 0 ? (
+              <EmptyState message="No announcements yet." />
+            ) : (
+              data.announcements.slice(0, 3).map((announcement) => (
+                <div key={announcement.item.id} className="rounded-2xl border border-border bg-muted/25 p-4">
+                  <p className="font-semibold text-foreground">{announcement.item.title}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{announcement.item.body}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">{formatDate(announcement.item.published_at ?? announcement.item.created_at)}</p>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </Panel>
     </div>
