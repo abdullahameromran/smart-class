@@ -2267,7 +2267,7 @@ function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...props}
-      className={`w-full rounded-xl border border-border bg-muted px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+      className={`w-full rounded-xl border border-border bg-muted px-3 py-2.5 text-sm outline-none transition-all duration-300 hover:border-primary/25 hover:bg-background/80 focus:border-primary focus:ring-2 focus:ring-primary/20 ${
         props.className ?? ""
       }`}
     />
@@ -2278,7 +2278,7 @@ function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
       {...props}
-      className={`w-full rounded-xl border border-border bg-muted px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+      className={`w-full rounded-xl border border-border bg-muted px-3 py-2.5 text-sm outline-none transition-all duration-300 hover:border-primary/25 hover:bg-background/80 focus:border-primary focus:ring-2 focus:ring-primary/20 ${
         props.className ?? ""
       }`}
     />
@@ -2289,7 +2289,7 @@ function TextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return (
     <textarea
       {...props}
-      className={`w-full rounded-xl border border-border bg-muted px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+      className={`w-full rounded-xl border border-border bg-muted px-3 py-2.5 text-sm outline-none transition-all duration-300 hover:border-primary/25 hover:bg-background/80 focus:border-primary focus:ring-2 focus:ring-primary/20 ${
         props.className ?? ""
       }`}
     />
@@ -2305,15 +2305,15 @@ function Button({
   variant?: "primary" | "secondary" | "ghost" | "danger";
 }) {
   const palette = {
-    primary: "bg-primary text-white hover:bg-primary/90",
-    secondary: "bg-secondary text-primary hover:bg-secondary/80",
-    ghost: "bg-transparent text-muted-foreground hover:bg-muted",
-    danger: "bg-red-50 text-red-600 hover:bg-red-100",
+    primary: "bg-primary text-white shadow-[0_14px_34px_rgba(124,92,191,0.24)] hover:bg-primary/95",
+    secondary: "bg-secondary text-primary shadow-sm hover:bg-secondary/85",
+    ghost: "bg-transparent text-muted-foreground hover:bg-muted/80 hover:text-foreground",
+    danger: "bg-red-50 text-red-600 shadow-sm hover:bg-red-100",
   };
   return (
     <button
       {...props}
-      className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${palette[variant]} ${className}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-lg active:scale-[0.99] active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-none ${palette[variant]} ${className}`}
     >
       {children}
     </button>
@@ -2348,7 +2348,7 @@ function Panel({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+    <section className="rounded-2xl border border-border bg-card p-5 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
       <div className="mb-4 flex items-start justify-between gap-4">
         <div>
           <h3 className="text-lg font-bold text-foreground">{title}</h3>
@@ -3096,7 +3096,7 @@ function LandingPage({
     <div className="relative min-h-screen overflow-hidden bg-background text-foreground">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.16),_transparent_30%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.14),_transparent_28%)]" />
       <div className="relative mx-auto flex min-h-screen max-w-7xl flex-col px-4 py-6">
-        <header className="flex items-center justify-between rounded-[2rem] border border-border/70 bg-card/85 px-5 py-4 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur">
+        <header className="flex items-center justify-between rounded-[2rem] border border-border/70 bg-card/85 px-5 py-4 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur transition-all duration-500 hover:-translate-y-0.5 hover:shadow-[0_26px_75px_rgba(15,23,42,0.12)]">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Smart Class</p>
             <h1 className="mt-1 text-xl font-bold">Connected school management</h1>
@@ -3110,7 +3110,7 @@ function LandingPage({
         </header>
 
         <div className="mt-6 grid flex-1 gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-          <section className="rounded-[2.25rem] border border-border/70 bg-card/92 p-8 shadow-[0_26px_90px_rgba(15,23,42,0.08)] backdrop-blur">
+          <section className="rounded-[2.25rem] border border-border/70 bg-card/92 p-8 shadow-[0_26px_90px_rgba(15,23,42,0.08)] backdrop-blur transition-all duration-500 hover:-translate-y-1 hover:shadow-[0_34px_100px_rgba(15,23,42,0.12)]">
             <Badge>Simple landing page</Badge>
             <h2 className="mt-5 max-w-4xl text-5xl font-bold leading-[1.04] tracking-tight">
               One place for schools, teachers, students, parents, and platform admins.
@@ -3126,16 +3126,16 @@ function LandingPage({
             </div>
 
             <div className="mt-8 grid gap-4 lg:grid-cols-2">
-              <div className="rounded-[1.75rem] border border-border/60 bg-secondary/60 p-5">
+              <div className="rounded-[1.75rem] border border-border/60 bg-secondary/60 p-5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
                 <p className="text-sm font-semibold text-foreground">Public pages now</p>
                 <p className="mt-2 text-sm text-muted-foreground">
                   We now have a basic landing page at `/`, plus separate `/login` and `/signup` screens.
                 </p>
-                <Button type="button" variant="secondary" onClick={() => setActiveTestId(item.item.id)}>
-                  Open test
+                <Button type="button" variant="secondary" onClick={onLogin} className="mt-4">
+                  Open login screen
                 </Button>
               </div>
-              <div className="rounded-[1.75rem] border border-border/60 bg-muted/45 p-5">
+              <div className="rounded-[1.75rem] border border-border/60 bg-muted/45 p-5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
                 <p className="text-sm font-semibold text-foreground">Dashboard pages now</p>
                 <p className="mt-2 text-sm text-muted-foreground">
                   Dashboard sections can open from real paths like `/teachers`, `/students`, `/messages`, and `/settings`.
@@ -3151,7 +3151,7 @@ function LandingPage({
             </div>
           </section>
 
-          <aside className="rounded-[2.25rem] border border-border/70 bg-card/92 p-8 shadow-[0_26px_90px_rgba(15,23,42,0.08)] backdrop-blur">
+          <aside className="rounded-[2.25rem] border border-border/70 bg-card/92 p-8 shadow-[0_26px_90px_rgba(15,23,42,0.08)] backdrop-blur transition-all duration-500 hover:-translate-y-1 hover:shadow-[0_34px_100px_rgba(15,23,42,0.12)]">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">What is inside</p>
             <div className="mt-5 space-y-4">
               {[
@@ -3161,7 +3161,10 @@ function LandingPage({
                 "Student learning and grades pages",
                 "Parent follow-up and school messaging",
               ].map((item) => (
-                <div key={item} className="rounded-[1.5rem] border border-border/60 bg-muted/35 px-4 py-4 text-sm text-muted-foreground">
+                <div
+                  key={item}
+                  className="rounded-[1.5rem] border border-border/60 bg-muted/35 px-4 py-4 text-sm text-muted-foreground transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/25 hover:bg-background/75 hover:shadow-md"
+                >
                   {item}
                 </div>
               ))}
@@ -3268,7 +3271,7 @@ function AuthScreen({
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(124,92,191,0.18),_transparent_32%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.14),_transparent_28%)]" />
       <div className="relative mx-auto grid w-full max-w-5xl gap-6 lg:grid-cols-[1.08fr_0.92fr]">
-        <div className="rounded-[2rem] border border-border bg-card/95 p-8 shadow-[0_30px_80px_rgba(28,27,58,0.08)] backdrop-blur">
+        <div className="rounded-[2rem] border border-border bg-card/95 p-8 shadow-[0_30px_80px_rgba(28,27,58,0.08)] backdrop-blur transition-all duration-500 hover:-translate-y-1 hover:shadow-[0_38px_90px_rgba(28,27,58,0.12)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Badge>Smart Class</Badge>
             <Button variant="ghost" onClick={onBackHome}>
@@ -3284,7 +3287,7 @@ function AuthScreen({
             <StatCard label="Schools" value="Connected" sub="Live people, classes, and records" />
             <StatCard label="Actions" value="Built in" sub="Setup, invites, exports, and alerts" />
           </div>
-          <div className="mt-8 rounded-2xl bg-muted/40 p-5">
+          <div className="mt-8 rounded-2xl bg-muted/40 p-5 transition-all duration-300 hover:bg-muted/55 hover:shadow-md">
             <p className="text-sm font-semibold text-foreground">First time opening Smart Class?</p>
             <p className="mt-2 text-sm text-muted-foreground">
               1. Create an account here.
@@ -3296,19 +3299,27 @@ function AuthScreen({
           </div>
         </div>
 
-        <div className="rounded-[2rem] border border-border bg-card/95 p-8 shadow-[0_30px_80px_rgba(28,27,58,0.08)] backdrop-blur">
-          <div className="inline-flex rounded-2xl bg-muted p-1">
+        <div className="rounded-[2rem] border border-border bg-card/95 p-8 shadow-[0_30px_80px_rgba(28,27,58,0.08)] backdrop-blur transition-all duration-500 hover:-translate-y-1 hover:shadow-[0_38px_90px_rgba(28,27,58,0.12)]">
+          <div className="inline-flex rounded-2xl bg-muted p-1 shadow-inner">
             <button
               type="button"
               onClick={() => onModeChange("signin")}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${mode === "signin" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition-all duration-300 ${
+                mode === "signin"
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground hover:-translate-y-0.5 hover:bg-card/70 hover:text-foreground"
+              }`}
             >
               Sign in
             </button>
             <button
               type="button"
               onClick={() => onModeChange("signup")}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${mode === "signup" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition-all duration-300 ${
+                mode === "signup"
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground hover:-translate-y-0.5 hover:bg-card/70 hover:text-foreground"
+              }`}
             >
               Sign up
             </button>
