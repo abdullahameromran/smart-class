@@ -3509,24 +3509,24 @@ function LandingPage({
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-background text-foreground">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(124,92,191,0.18),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.16),_transparent_24%),linear-gradient(180deg,_rgba(255,255,255,0.9),_rgba(245,243,255,0.96))]" />
-      <div className="relative mx-auto flex min-h-screen max-w-7xl flex-col px-4 pb-6 pt-32 lg:px-6 lg:pt-36">
-        <header className="fixed left-1/2 top-4 z-40 flex w-[calc(100%-2rem)] max-w-7xl -translate-x-1/2 flex-wrap items-center justify-between gap-4 rounded-[2rem] border border-border/70 bg-card/84 px-5 py-4 shadow-[0_24px_70px_rgba(15,23,42,0.08)] backdrop-blur-xl transition-all duration-500 hover:-translate-y-0.5 hover:shadow-[0_30px_80px_rgba(15,23,42,0.1)]">
-          <div className="flex items-center gap-4">
+      <div className="relative mx-auto flex min-h-screen max-w-7xl flex-col px-4 pb-6 pt-44 sm:pt-36 lg:px-6 lg:pt-36">
+        <header className="fixed left-1/2 top-3 z-40 flex w-[calc(100%-1rem)] max-w-7xl -translate-x-1/2 flex-col gap-4 rounded-[1.6rem] border border-border/70 bg-card/84 px-4 py-4 shadow-[0_24px_70px_rgba(15,23,42,0.08)] backdrop-blur-xl transition-all duration-500 hover:-translate-y-0.5 hover:shadow-[0_30px_80px_rgba(15,23,42,0.1)] sm:top-4 sm:w-[calc(100%-2rem)] sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:rounded-[2rem] sm:px-5">
+          <div className="flex min-w-0 items-center gap-3 sm:gap-4">
             <img
               src={smartClassLogo}
               alt="Smart Class"
-              className="h-14 w-14 rounded-[1.25rem] object-cover shadow-[0_14px_34px_rgba(15,23,42,0.14)]"
+              className="h-12 w-12 rounded-[1rem] object-cover shadow-[0_14px_34px_rgba(15,23,42,0.14)] sm:h-14 sm:w-14 sm:rounded-[1.25rem]"
             />
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Smart Class</p>
-              <h1 className="mt-1 text-xl font-bold">School management that feels ready from day one</h1>
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-primary sm:text-xs sm:tracking-[0.24em]">Smart Class</p>
+              <h1 className="mt-1 text-base font-bold leading-tight sm:text-xl">School management that feels ready from day one</h1>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={onLogin}>
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
+            <Button variant="secondary" onClick={onLogin} className="w-full">
               Log in
             </Button>
-            <Button onClick={onSignup}>Start free account</Button>
+            <Button onClick={onSignup} className="w-full">Start free account</Button>
           </div>
         </header>
 
