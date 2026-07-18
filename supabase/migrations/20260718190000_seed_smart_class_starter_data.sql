@@ -12,7 +12,7 @@ select
   'monthly',
   '{"lessons": true, "homework": true, "monthly_tests": true, "messaging": true, "reports": false}'::jsonb
 where not exists (
-  select 1 from subscription_plans where name = 'Starter'
+  select 1 from subscription_plans where lower(btrim(name)) = 'starter'
 );
 
 insert into subscription_plans (name, max_students, max_teachers, price_cents, billing_cycle, features)
@@ -24,7 +24,7 @@ select
   'monthly',
   '{"lessons": true, "homework": true, "monthly_tests": true, "messaging": true, "reports": true}'::jsonb
 where not exists (
-  select 1 from subscription_plans where name = 'Growth'
+  select 1 from subscription_plans where lower(btrim(name)) = 'growth'
 );
 
 insert into subscription_plans (name, max_students, max_teachers, price_cents, billing_cycle, features)
@@ -36,7 +36,7 @@ select
   'monthly',
   '{"lessons": true, "homework": true, "monthly_tests": true, "messaging": true, "reports": true, "priority_support": true}'::jsonb
 where not exists (
-  select 1 from subscription_plans where name = 'Enterprise'
+  select 1 from subscription_plans where lower(btrim(name)) = 'enterprise'
 );
 
 insert into platform_settings (key, value) values

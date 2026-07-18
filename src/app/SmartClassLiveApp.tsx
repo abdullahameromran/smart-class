@@ -17,15 +17,18 @@ import {
   Megaphone,
   Plus,
   RefreshCw,
+  Search,
   Send,
   Settings,
   Shield,
+  Sparkles,
   UserPlus,
   Users,
 } from "lucide-react";
 import { hasSupabaseEnv, supabase, supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
 
 type UserRole = "super_admin" | "school_admin" | "teacher" | "student" | "parent";
+type AuthMode = "signin" | "signup";
 type SettingValueType = "text" | "number" | "boolean" | "list" | "pairs";
 
 type BasicProfile = {
@@ -476,6 +479,7 @@ type SchoolAdminData = {
   recipientOptions: RecipientOption[];
   announcements: AnnouncementBundle[];
   timetable: TimetableEntry[];
+  grades: FinalGrade[];
   messages: MessageBundle[];
 };
 
@@ -561,11 +565,13 @@ const NAV_BY_ROLE: Record<UserRole, NavItem[]> = {
     { id: "settings", label: "Settings", icon: <Settings className="w-4 h-4" /> },
   ],
   school_admin: [
-    { id: "dashboard", label: "Overview", icon: <Home className="w-4 h-4" /> },
-    { id: "academic", label: "Academic", icon: <Layers className="w-4 h-4" /> },
+    { id: "dashboard", label: "Dashboard", icon: <Home className="w-4 h-4" /> },
+    { id: "settings", label: "School Settings", icon: <Settings className="w-4 h-4" /> },
+    { id: "academic", label: "Academic Setup", icon: <Layers className="w-4 h-4" /> },
     { id: "teachers", label: "Teachers", icon: <Users className="w-4 h-4" /> },
     { id: "students", label: "Students", icon: <GraduationCap className="w-4 h-4" /> },
     { id: "timetable", label: "Timetable", icon: <Calendar className="w-4 h-4" /> },
+    { id: "grades", label: "Final Grades", icon: <CheckSquare className="w-4 h-4" /> },
     { id: "announcements", label: "Announcements", icon: <Megaphone className="w-4 h-4" /> },
     { id: "messages", label: "Messages", icon: <Mail className="w-4 h-4" /> },
   ],
@@ -602,6 +608,53 @@ const NAV_BY_ROLE: Record<UserRole, NavItem[]> = {
     { id: "messages", label: "Messages", icon: <Mail className="w-4 h-4" /> },
   ],
 };
+
+const DEFAULT_VIEW = "dashboard";
+const PLATFORM_AUDIT_PAGE_SIZE = 8;
+const SCHOOL_ACTIVITY_CARD_PAGE_SIZE = 5;
+const SCHOOL_ACTIVITY_PAGE_SIZE = 10;
+
+function normalizePath(path: string) {
+  const trimmed = path.trim();
+  if (!trimmed || trimmed === "/") return "/";
+  return `/${trimmed.replace(/^\/+|\/+$/g, "")}`;
+}
+
+function getInitialPath() {
+  if (typeof window === "undefined") {
+    return "/";
+  }
+
+  return normalizePath(window.location.pathname || "/");
+}
+
+function isPublicPath(path: string) {
+  const normalized = normalizePath(path);
+  return normalized === "/" || normalized === "/login" || normalized === "/signup";
+}
+
+function isAuthPath(path: string) {
+  const normalized = normalizePath(path);
+  return normalized === "/login" || normalized === "/signup";
+}
+
+function getAuthModeFromPath(path: string): AuthMode {
+  return normalizePath(path) === "/signup" ? "signup" : "signin";
+}
+
+function getViewFromPath(path: string) {
+  const normalized = normalizePath(path);
+  if (isPublicPath(normalized)) {
+    return null;
+  }
+
+  const segment = normalized.slice(1).split("/")[0];
+  return segment || DEFAULT_VIEW;
+}
+
+function buildViewPath(view: string) {
+  return `/${view || DEFAULT_VIEW}`;
+}
 
 function unwrap<T>(result: { data: T; error: { message: string } | null }): T {
   if (result.error) {
@@ -696,6 +749,15 @@ function titleCaseLabel(value: string) {
     .replace(/\s+/g, " ")
     .trim()
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatPlanLabel(value?: string | null) {
+  if (!value) return "Untitled plan";
+  return titleCaseLabel(value);
+}
+
+function normalizePlanName(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function normalizeLineList(value: string) {
@@ -1259,6 +1321,7 @@ async function loadSchoolAdminData(schoolId: string, currentUserId: string) {
     enrollments,
     parentLinks,
     timetable,
+    grades,
   ] = await Promise.all([
     supabase
       .from("schools")
@@ -1322,6 +1385,10 @@ async function loadSchoolAdminData(schoolId: string, currentUserId: string) {
     supabase
       .from("timetable_entries")
       .select("id,school_id,academic_year_id,working_day_id,time_slot_id,class_id,subject_id,teacher_id")
+      .eq("school_id", schoolId),
+    supabase
+      .from("final_grades")
+      .select("id,school_id,academic_year_id,class_id,subject_id,student_id,grade_value,grade_letter,remarks,status")
       .eq("school_id", schoolId),
   ]);
 
@@ -1412,6 +1479,7 @@ async function loadSchoolAdminData(schoolId: string, currentUserId: string) {
     recipientOptions,
     announcements: bundleAnnouncements(announcements, targets, profileMap, classMap),
     timetable: (unwrap(timetable) as unknown) as TimetableEntry[],
+    grades: (unwrap(grades) as unknown) as FinalGrade[],
     messages: bundleMessages(messages, recipients, profileMap),
   } satisfies SchoolAdminData;
 }
@@ -2247,6 +2315,96 @@ function Panel({
   );
 }
 
+function ActivityFeed({
+  rows,
+  profileMap,
+  schoolMap,
+  emptyMessage,
+  page,
+  pageSize,
+  onPageChange,
+  maxHeightClass = "max-h-[30rem]",
+  showMetadata = false,
+  showSchoolLabel = false,
+}: {
+  rows: AuditLogRecord[];
+  profileMap: Record<string, BasicProfile>;
+  schoolMap?: Record<string, SchoolRecord>;
+  emptyMessage: string;
+  page: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+  maxHeightClass?: string;
+  showMetadata?: boolean;
+  showSchoolLabel?: boolean;
+}) {
+  if (rows.length === 0) {
+    return <EmptyState message={emptyMessage} />;
+  }
+
+  const totalPages = Math.max(Math.ceil(rows.length / pageSize), 1);
+  const safePage = Math.min(page, totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const visibleRows = rows.slice(startIndex, startIndex + pageSize);
+  const visibleStart = startIndex + 1;
+  const visibleEnd = startIndex + visibleRows.length;
+
+  return (
+    <div className="space-y-4">
+      <div className={`space-y-3 overflow-y-auto pr-2 ${maxHeightClass}`}>
+        {visibleRows.map((row) => {
+          const actor = row.actor_id ? profileMap[row.actor_id] : null;
+          const schoolLabel = row.school_id ? schoolMap?.[row.school_id]?.name ?? "Unknown school" : "Platform";
+          return (
+            <div key={row.id} className="rounded-2xl border border-border bg-muted/25 p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-semibold">{titleCaseLabel(row.action)}</p>
+                <Badge>{row.entity_type}</Badge>
+                {showSchoolLabel ? <Badge>{schoolLabel}</Badge> : null}
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {actor ? fullName(actor) : "System"} / {formatDateTime(row.created_at)}
+              </p>
+              {showMetadata && row.metadata ? (
+                <pre className="mt-3 whitespace-pre-wrap rounded-2xl bg-background/70 p-3 text-xs text-muted-foreground">
+                  {formatSettingValue(row.metadata)}
+                </pre>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-col gap-3 rounded-2xl border border-border bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Showing {visibleStart}-{visibleEnd} of {rows.length}
+        </p>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => onPageChange(safePage - 1)}
+            disabled={safePage === 1}
+          >
+            Previous
+          </Button>
+          <div className="min-w-[92px] rounded-xl border border-border bg-background px-3 py-2 text-center text-sm font-semibold text-foreground">
+            {safePage} / {totalPages}
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => onPageChange(safePage + 1)}
+            disabled={safePage === totalPages}
+          >
+            Next
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StatCard({
   label,
   value,
@@ -2351,7 +2509,7 @@ function WorkspaceShell({
   loading: boolean;
   children: ReactNode;
 }) {
-  const useFloatingSidebar = workspace.role === "school_admin";
+  const useFloatingSidebar = true;
 
   return (
     <div
@@ -2517,14 +2675,110 @@ function ConfigScreen() {
   );
 }
 
+function LandingPage({
+  onLogin,
+  onSignup,
+}: {
+  onLogin: () => void;
+  onSignup: () => void;
+}) {
+  return (
+    <div className="relative min-h-screen overflow-hidden bg-background text-foreground">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.16),_transparent_30%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.14),_transparent_28%)]" />
+      <div className="relative mx-auto flex min-h-screen max-w-7xl flex-col px-4 py-6">
+        <header className="flex items-center justify-between rounded-[2rem] border border-border/70 bg-card/85 px-5 py-4 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Smart Class</p>
+            <h1 className="mt-1 text-xl font-bold">Connected school management</h1>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={onLogin}>
+              Log in
+            </Button>
+            <Button onClick={onSignup}>Create account</Button>
+          </div>
+        </header>
+
+        <div className="mt-6 grid flex-1 gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <section className="rounded-[2.25rem] border border-border/70 bg-card/92 p-8 shadow-[0_26px_90px_rgba(15,23,42,0.08)] backdrop-blur">
+            <Badge>Simple landing page</Badge>
+            <h2 className="mt-5 max-w-4xl text-5xl font-bold leading-[1.04] tracking-tight">
+              One place for schools, teachers, students, parents, and platform admins.
+            </h2>
+            <p className="mt-5 max-w-3xl text-base text-muted-foreground">
+              Smart Class brings school setup, class management, lessons, homework, tests, announcements, and messaging into one clean system.
+            </p>
+
+            <div className="mt-8 grid gap-4 md:grid-cols-3">
+              <StatCard label="School setup" value="Fast" sub="Create a school and invite its first admin" />
+              <StatCard label="Daily work" value="Organized" sub="Lessons, attendance, announcements, and messages" />
+              <StatCard label="Access" value="Role-based" sub="Platform admin, school admin, teacher, student, and parent" />
+            </div>
+
+            <div className="mt-8 grid gap-4 lg:grid-cols-2">
+              <div className="rounded-[1.75rem] border border-border/60 bg-secondary/60 p-5">
+                <p className="text-sm font-semibold text-foreground">Public pages now</p>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  We now have a basic landing page at `/`, plus separate `/login` and `/signup` screens.
+                </p>
+              </div>
+              <div className="rounded-[1.75rem] border border-border/60 bg-muted/45 p-5">
+                <p className="text-sm font-semibold text-foreground">Dashboard pages now</p>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Dashboard sections can open from real paths like `/teachers`, `/students`, `/messages`, and `/settings`.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-8 flex flex-wrap gap-3">
+              <Button onClick={onSignup}>Start with sign up</Button>
+              <Button variant="secondary" onClick={onLogin}>
+                Go to login
+              </Button>
+            </div>
+          </section>
+
+          <aside className="rounded-[2.25rem] border border-border/70 bg-card/92 p-8 shadow-[0_26px_90px_rgba(15,23,42,0.08)] backdrop-blur">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">What is inside</p>
+            <div className="mt-5 space-y-4">
+              {[
+                "Platform overview for Super Admin",
+                "School setup and academic structure",
+                "Teacher lesson and assessment tools",
+                "Student learning and grades pages",
+                "Parent follow-up and school messaging",
+              ].map((item) => (
+                <div key={item} className="rounded-[1.5rem] border border-border/60 bg-muted/35 px-4 py-4 text-sm text-muted-foreground">
+                  {item}
+                </div>
+              ))}
+            </div>
+            <div className="mt-6 rounded-[1.75rem] bg-primary px-5 py-5 text-primary-foreground shadow-[0_20px_50px_rgba(37,99,235,0.28)]">
+              <p className="text-sm font-semibold">More public pages can come later.</p>
+              <p className="mt-2 text-sm text-primary-foreground/80">
+                This keeps the first version simple while giving the app a cleaner structure now.
+              </p>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AuthScreen({
+  mode,
   loading,
   onNotify,
+  onModeChange,
+  onBackHome,
 }: {
+  mode: AuthMode;
   loading: boolean;
   onNotify: (kind: "success" | "error" | "info", message: string) => void;
+  onModeChange: (mode: AuthMode) => void;
+  onBackHome: () => void;
 }) {
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
@@ -2574,6 +2828,7 @@ function AuthScreen({
       return;
     }
     onNotify("info", "Account created. Check your email to confirm, then sign in.");
+    onModeChange("signin");
   };
 
   const sendMagicLink = async () => {
@@ -2601,7 +2856,12 @@ function AuthScreen({
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(124,92,191,0.18),_transparent_32%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.14),_transparent_28%)]" />
       <div className="relative mx-auto grid w-full max-w-5xl gap-6 lg:grid-cols-[1.08fr_0.92fr]">
         <div className="rounded-[2rem] border border-border bg-card/95 p-8 shadow-[0_30px_80px_rgba(28,27,58,0.08)] backdrop-blur">
-          <Badge>Smart Class</Badge>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Badge>Smart Class</Badge>
+            <Button variant="ghost" onClick={onBackHome}>
+              Back to home
+            </Button>
+          </div>
           <h1 className="mt-4 text-4xl font-bold leading-tight">Run your school in one connected place.</h1>
           <p className="mt-4 max-w-2xl text-base text-muted-foreground">
             Sign in to manage schools, people, classes, learning, and communication from one shared dashboard.
@@ -2627,14 +2887,14 @@ function AuthScreen({
           <div className="inline-flex rounded-2xl bg-muted p-1">
             <button
               type="button"
-              onClick={() => setMode("signin")}
+              onClick={() => onModeChange("signin")}
               className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${mode === "signin" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
             >
               Sign in
             </button>
             <button
               type="button"
-              onClick={() => setMode("signup")}
+              onClick={() => onModeChange("signup")}
               className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${mode === "signup" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
             >
               Sign up
@@ -2845,6 +3105,9 @@ function SuperAdminPortal({
   const [settingsQuery, setSettingsQuery] = useState("");
   const [dashboardFocus, setDashboardFocus] = useState<"overview" | "people" | "access" | "audit">("overview");
   const [dashboardRoleFilter, setDashboardRoleFilter] = useState<"all" | UserRole>("all");
+  const [platformAuditPage, setPlatformAuditPage] = useState(1);
+  const [schoolRecentActivityPage, setSchoolRecentActivityPage] = useState(1);
+  const [schoolActivityPage, setSchoolActivityPage] = useState(1);
 
   const topLevelView = view === "billing"
     ? "subscriptions"
@@ -2895,6 +3158,15 @@ function SuperAdminPortal({
       school_id: prev.school_id || data.schools[0]?.id || "",
     }));
   }, [data.plans, data.profiles, data.schools]);
+
+  useEffect(() => {
+    setPlatformAuditPage(1);
+  }, [auditQuery]);
+
+  useEffect(() => {
+    setSchoolRecentActivityPage(1);
+    setSchoolActivityPage(1);
+  }, [selectedSchoolId]);
 
   const roleRowsByUser = data.roleRows.reduce<Record<string, RoleRow[]>>((acc, row) => {
     if (!acc[row.user_id]) {
@@ -3171,7 +3443,7 @@ function SuperAdminPortal({
   });
 
   const selectedSchoolAuditLogs = selectedSchoolId
-    ? data.auditLogs.filter((row) => row.school_id === selectedSchoolId).slice(0, 12)
+    ? data.auditLogs.filter((row) => row.school_id === selectedSchoolId)
     : [];
 
   const resetPlanForm = () => {
@@ -3314,6 +3586,18 @@ function SuperAdminPortal({
     event.preventDefault();
     try {
       setBusy(true);
+      const trimmedPlanName = planForm.name.trim().replace(/\s+/g, " ");
+      if (!trimmedPlanName) {
+        throw new Error("Plan name is required.");
+      }
+      const normalizedPlanName = normalizePlanName(trimmedPlanName);
+      const hasDuplicateName = data.plans.some(
+        (plan) => plan.id !== planForm.id && normalizePlanName(plan.name) === normalizedPlanName,
+      );
+      if (hasDuplicateName) {
+        throw new Error(`A plan named "${formatPlanLabel(trimmedPlanName)}" already exists.`);
+      }
+
       const priceCents = Number(planForm.price_cents);
       if (!Number.isFinite(priceCents)) {
         throw new Error("Plan price must be a valid number in cents.");
@@ -3330,7 +3614,7 @@ function SuperAdminPortal({
       const parsedFeatures = parsePlanFeaturesInput(planForm.featuresInput);
 
       const payload: Record<string, unknown> = {
-        name: planForm.name,
+        name: trimmedPlanName,
         max_students: maxStudents,
         max_teachers: maxTeachers,
         price_cents: priceCents,
@@ -3370,7 +3654,7 @@ function SuperAdminPortal({
     try {
       setBusy(true);
       unwrap(await supabase.from("subscription_plans").update({ is_active: !plan.is_active }).eq("id", plan.id));
-      onNotify("success", `${plan.name} ${plan.is_active ? "deactivated" : "activated"}.`);
+      onNotify("success", `${formatPlanLabel(plan.name)} ${plan.is_active ? "deactivated" : "activated"}.`);
       await onRefresh();
     } catch (error) {
       onNotify("error", error instanceof Error ? error.message : "Failed to update plan.");
@@ -3710,38 +3994,18 @@ function SuperAdminPortal({
                 />
               </Field>
             </div>
-
-            <div className="space-y-3">
-              {filteredAuditLogs.length === 0 ? (
-                <EmptyState message="No matching activity found." />
-              ) : (
-                filteredAuditLogs.slice(0, 40).map((row) => {
-                  const actor = row.actor_id ? profileMap[row.actor_id] : null;
-                  const schoolLabel = row.school_id ? schoolMap[row.school_id]?.name ?? "Unknown school" : "Platform";
-                  return (
-                    <div key={row.id} className="rounded-2xl border border-border bg-muted/30 p-4">
-                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="font-semibold">{titleCaseLabel(row.action)}</p>
-                            <Badge>{row.entity_type}</Badge>
-                            <Badge>{schoolLabel}</Badge>
-                          </div>
-                          <p className="mt-2 text-sm text-muted-foreground">
-                            {actor ? fullName(actor) : "System"} / {formatDateTime(row.created_at)}
-                          </p>
-                          {row.metadata ? (
-                            <pre className="mt-3 whitespace-pre-wrap rounded-2xl bg-background/70 p-3 text-xs text-muted-foreground">
-                              {formatSettingValue(row.metadata)}
-                            </pre>
-                          ) : null}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
+            <ActivityFeed
+              rows={filteredAuditLogs}
+              profileMap={profileMap}
+              schoolMap={schoolMap}
+              emptyMessage="No matching activity found."
+              page={platformAuditPage}
+              pageSize={PLATFORM_AUDIT_PAGE_SIZE}
+              onPageChange={setPlatformAuditPage}
+              maxHeightClass="max-h-[36rem]"
+              showMetadata
+              showSchoolLabel
+            />
           </Panel>
         </div>
       );
@@ -4018,49 +4282,29 @@ function SuperAdminPortal({
               </Panel>
 
               <Panel title="Recent Activity" description="Recent tracked actions for this school only.">
-                <div className="space-y-3">
-                  {selectedSchoolAuditLogs.length === 0 ? (
-                    <EmptyState message="No school activity has been logged yet." />
-                  ) : (
-                    selectedSchoolAuditLogs.map((row) => (
-                      <div key={row.id} className="rounded-2xl border border-border bg-muted/25 p-4">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="font-semibold">{titleCaseLabel(row.action)}</p>
-                          <Badge>{row.entity_type}</Badge>
-                        </div>
-                        <p className="mt-2 text-sm text-muted-foreground">
-                          {row.actor_id ? fullName(profileMap[row.actor_id]) : "System"} / {formatDateTime(row.created_at)}
-                        </p>
-                      </div>
-                    ))
-                  )}
-                </div>
+                <ActivityFeed
+                  rows={selectedSchoolAuditLogs}
+                  profileMap={profileMap}
+                  emptyMessage="No school activity has been logged yet."
+                  page={schoolRecentActivityPage}
+                  pageSize={SCHOOL_ACTIVITY_CARD_PAGE_SIZE}
+                  onPageChange={setSchoolRecentActivityPage}
+                  maxHeightClass="max-h-[24rem]"
+                />
               </Panel>
             </div>
           ) : schoolSection === "activity" ? (
             <Panel title="School Activity Feed" description="Review everything logged for this school in one dedicated stream.">
-              <div className="space-y-3">
-                {selectedSchoolAuditLogs.length === 0 ? (
-                  <EmptyState message="No school activity has been logged yet." />
-                ) : (
-                  selectedSchoolAuditLogs.map((row) => (
-                    <div key={row.id} className="rounded-2xl border border-border bg-muted/25 p-4">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-semibold">{titleCaseLabel(row.action)}</p>
-                        <Badge>{row.entity_type}</Badge>
-                      </div>
-                      <p className="mt-2 text-sm text-muted-foreground">
-                        {row.actor_id ? fullName(profileMap[row.actor_id]) : "System"} / {formatDateTime(row.created_at)}
-                      </p>
-                      {row.metadata ? (
-                        <pre className="mt-3 whitespace-pre-wrap rounded-2xl bg-background/70 p-3 text-xs text-muted-foreground">
-                          {formatSettingValue(row.metadata)}
-                        </pre>
-                      ) : null}
-                    </div>
-                  ))
-                )}
-              </div>
+              <ActivityFeed
+                rows={selectedSchoolAuditLogs}
+                profileMap={profileMap}
+                emptyMessage="No school activity has been logged yet."
+                page={schoolActivityPage}
+                pageSize={SCHOOL_ACTIVITY_PAGE_SIZE}
+                onPageChange={setSchoolActivityPage}
+                maxHeightClass="max-h-[40rem]"
+                showMetadata
+              />
             </Panel>
           ) : (
             <Panel
@@ -4143,7 +4387,7 @@ function SuperAdminPortal({
                           <h3 className="text-lg font-bold">{row.school_name}</h3>
                           <Badge tone={row.is_active ? "success" : "warning"}>{row.is_active ? "Active" : "Inactive"}</Badge>
                           <Badge>{row.subscription_status ?? "No subscription"}</Badge>
-                          <Badge>{row.plan?.name ?? "No plan"}</Badge>
+                          <Badge>{row.plan ? formatPlanLabel(row.plan.name) : "No plan"}</Badge>
                         </div>
                         <p className="mt-2 text-sm text-muted-foreground">
                           {row.student_count} students / {row.teacher_count} teachers / {row.class_count} classes
@@ -4199,7 +4443,7 @@ function SuperAdminPortal({
                   >
                     {data.plans.map((plan) => (
                       <option key={plan.id} value={plan.id}>
-                        {plan.name}
+                        {formatPlanLabel(plan.name)}
                       </option>
                     ))}
                   </Select>
@@ -4298,7 +4542,7 @@ function SuperAdminPortal({
                 >
                   <div className="flex items-center justify-between gap-4">
                     <div>
-                      <p className="font-semibold">{entry.plan.name}</p>
+                      <p className="font-semibold">{formatPlanLabel(entry.plan.name)}</p>
                       <p className="text-sm text-muted-foreground">{currencyFromCents(entry.plan.price_cents)} / {entry.plan.billing_cycle}</p>
                     </div>
                     <Badge>{entry.schoolCount} schools</Badge>
@@ -4322,7 +4566,7 @@ function SuperAdminPortal({
                   <div key={entry.plan.id} className="rounded-2xl border border-border bg-muted/25 p-4">
                     <div className="flex items-center justify-between gap-4">
                       <div>
-                        <p className="font-semibold">{entry.plan.name}</p>
+                        <p className="font-semibold">{formatPlanLabel(entry.plan.name)}</p>
                         <p className="text-sm text-muted-foreground">{entry.schoolCount} schools</p>
                       </div>
                       <p className="text-lg font-bold">{currencyFromCents(entry.revenueCents)}</p>
@@ -4348,7 +4592,7 @@ function SuperAdminPortal({
       return (
         <div className="space-y-6">
           <SectionTrail
-            items={["Subscriptions", selectedPlanUsage.plan.name]}
+            items={["Subscriptions", formatPlanLabel(selectedPlanUsage.plan.name)]}
             description="Edit this plan and review every school that currently uses it."
             action={
               <Button
@@ -4482,7 +4726,7 @@ function SuperAdminPortal({
                             >
                               {data.plans.map((plan) => (
                                 <option key={plan.id} value={plan.id}>
-                                  {plan.name}
+                                  {formatPlanLabel(plan.name)}
                                 </option>
                               ))}
                             </Select>
@@ -4551,7 +4795,7 @@ function SuperAdminPortal({
               <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-secondary text-primary">
                 <Layers className="h-5 w-5" />
               </div>
-              <h3 className="mt-5 text-3xl font-bold">{entry.plan.name}</h3>
+              <h3 className="mt-5 text-3xl font-bold">{formatPlanLabel(entry.plan.name)}</h3>
               <p className="mt-2 text-3xl font-bold text-primary">{currencyFromCents(entry.plan.price_cents)}</p>
               <p className="mt-1 text-sm text-muted-foreground">per {entry.plan.billing_cycle}</p>
               <p className="mt-4 text-sm text-muted-foreground">{entry.schoolCount} schools</p>
@@ -4788,7 +5032,7 @@ function SuperAdminPortal({
                   <div key={plan.id} className="rounded-2xl bg-muted/30 p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="font-semibold">{plan.name}</p>
+                        <p className="font-semibold">{formatPlanLabel(plan.name)}</p>
                         <p className="text-xs text-muted-foreground">
                           {currencyFromCents(plan.price_cents)} / {plan.billing_cycle}
                         </p>
@@ -5069,7 +5313,7 @@ function SuperAdminPortal({
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-semibold">{plan.name}</p>
+                      <p className="font-semibold">{formatPlanLabel(plan.name)}</p>
                       <Badge tone={plan.is_active ? "success" : "warning"}>
                         {plan.is_active ? "Active" : "Inactive"}
                       </Badge>
@@ -5119,7 +5363,7 @@ function SuperAdminPortal({
                       <div>
                         <p className="font-semibold">{schoolMap[subscription.school_id]?.name ?? "Unknown school"}</p>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          Started {formatDate(subscription.starts_at)} / Current plan {planMap[subscription.plan_id]?.name ?? "Unknown"}
+                          Started {formatDate(subscription.starts_at)} / Current plan {planMap[subscription.plan_id]?.name ? formatPlanLabel(planMap[subscription.plan_id]?.name) : "Unknown"}
                         </p>
                       </div>
                       <Field label="Plan">
@@ -5129,7 +5373,7 @@ function SuperAdminPortal({
                         >
                           {data.plans.map((plan) => (
                             <option key={plan.id} value={plan.id}>
-                              {plan.name}
+                              {formatPlanLabel(plan.name)}
                             </option>
                           ))}
                         </Select>
@@ -5377,7 +5621,7 @@ function SuperAdminPortal({
               >
                 {data.plans.map((plan) => (
                   <option key={plan.id} value={plan.id}>
-                    {plan.name}
+                    {formatPlanLabel(plan.name)}
                   </option>
                 ))}
               </Select>
@@ -5419,7 +5663,7 @@ function SuperAdminPortal({
             ) : (
               data.stats.map((school) => {
                 const subscription = latestSubscriptionsBySchool[school.school_id];
-                const planName = subscription ? planMap[subscription.plan_id]?.name ?? "Unknown plan" : "No plan";
+                const planName = subscription ? formatPlanLabel(planMap[subscription.plan_id]?.name ?? "Unknown plan") : "No plan";
                 const schoolRow = data.schools.find((row) => row.id === school.school_id) ?? {
                   id: school.school_id,
                   name: school.school_name,
@@ -5510,7 +5754,7 @@ function SuperAdminPortal({
               >
                 {data.plans.map((plan) => (
                   <option key={plan.id} value={plan.id}>
-                    {plan.name}
+                    {formatPlanLabel(plan.name)}
                   </option>
                 ))}
               </Select>
@@ -5736,7 +5980,7 @@ function SuperAdminPortal({
               <div key={plan.id} className="rounded-2xl bg-muted/30 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="font-semibold">{plan.name}</p>
+                    <p className="font-semibold">{formatPlanLabel(plan.name)}</p>
                     <p className="text-xs text-muted-foreground">
                       {currencyFromCents(plan.price_cents)} / {plan.billing_cycle}
                     </p>
@@ -5760,12 +6004,14 @@ function SchoolAdminPortal({
   profile,
   onNotify,
   onRefresh,
+  onChangeView,
 }: {
   view: string;
   data: SchoolAdminData;
   profile: BasicProfile;
   onNotify: (kind: "success" | "error" | "info", message: string) => void;
   onRefresh: () => Promise<void>;
+  onChangeView: (nextView: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [daySelection, setDaySelection] = useState<number[]>(data.workingDays.map((item) => item.day_of_week));
@@ -6633,6 +6879,1646 @@ function SchoolAdminPortal({
           that in the next update.
         </p>
       </Panel>
+    </div>
+  );
+}
+
+function SchoolAdminPortalModern({
+  view,
+  data,
+  profile,
+  onNotify,
+  onRefresh,
+  onChangeView,
+}: {
+  view: string;
+  data: SchoolAdminData;
+  profile: BasicProfile;
+  onNotify: (kind: "success" | "error" | "info", message: string) => void;
+  onRefresh: () => Promise<void>;
+  onChangeView: (nextView: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [academicSection, setAcademicSection] = useState<
+    "working-days" | "time-slots" | "academic-years" | "grade-levels" | "classes" | "subjects"
+  >("working-days");
+  const [teacherQuery, setTeacherQuery] = useState("");
+  const [studentQuery, setStudentQuery] = useState("");
+  const [announcementQuery, setAnnouncementQuery] = useState("");
+  const [messageQuery, setMessageQuery] = useState("");
+  const [showTeacherForm, setShowTeacherForm] = useState(data.teachers.length === 0);
+  const [showStudentForm, setShowStudentForm] = useState(data.students.length === 0);
+  const [showTimetableForm, setShowTimetableForm] = useState(data.timetable.length === 0);
+  const [showAnnouncementForm, setShowAnnouncementForm] = useState(data.announcements.length === 0);
+  const [selectedTimetableClassId, setSelectedTimetableClassId] = useState(data.classes[0]?.id ?? "");
+  const [gradeClassFilter, setGradeClassFilter] = useState(data.classes[0]?.id ?? "");
+  const [gradeSubjectFilter, setGradeSubjectFilter] = useState(data.subjects[0]?.id ?? "");
+  const [selectedConversationId, setSelectedConversationId] = useState("");
+  const [daySelection, setDaySelection] = useState<number[]>(data.workingDays.map((item) => item.day_of_week));
+  const [yearForm, setYearForm] = useState({
+    name: "",
+    start_date: "",
+    end_date: "",
+    is_current: true,
+  });
+  const [slotForm, setSlotForm] = useState({
+    label: "",
+    start_time: "",
+    end_time: "",
+    sort_order: String(data.timeSlots.length + 1),
+  });
+  const [gradeForm, setGradeForm] = useState({
+    name: "",
+    sort_order: String(data.gradeLevels.length + 1),
+  });
+  const [subjectForm, setSubjectForm] = useState({
+    name: "",
+    code: "",
+  });
+  const [classForm, setClassForm] = useState({
+    name: "",
+    grade_level_id: data.gradeLevels[0]?.id ?? "",
+    academic_year_id: data.academicYears.find((item) => item.is_current)?.id ?? data.academicYears[0]?.id ?? "",
+  });
+  const [teacherForm, setTeacherForm] = useState({
+    full_name: "",
+    email: "",
+    subject_id: data.subjects[0]?.id ?? "",
+    class_id: data.classes[0]?.id ?? "",
+  });
+  const [studentForm, setStudentForm] = useState({
+    full_name: "",
+    email: "",
+    class_id: data.classes[0]?.id ?? "",
+    parent_name: "",
+    parent_email: "",
+  });
+  const [timetableForm, setTimetableForm] = useState({
+    academic_year_id: data.academicYears.find((item) => item.is_current)?.id ?? data.academicYears[0]?.id ?? "",
+    working_day_id: data.workingDays[0]?.id ?? "",
+    time_slot_id: data.timeSlots[0]?.id ?? "",
+    class_id: data.classes[0]?.id ?? "",
+    subject_id: data.subjects[0]?.id ?? "",
+    teacher_id: data.teachers[0]?.userId ?? "",
+  });
+  const [announcementForm, setAnnouncementForm] = useState({
+    title: "",
+    body: "",
+    target_type: "school",
+    target_role: "student",
+    target_id: data.classes[0]?.id ?? "",
+  });
+  const [messageForm, setMessageForm] = useState({
+    recipient_id: data.recipientOptions[0]?.id ?? "",
+    subject: "",
+    body: "",
+  });
+
+  useEffect(() => {
+    setDaySelection(data.workingDays.map((item) => item.day_of_week));
+  }, [data.workingDays]);
+
+  useEffect(() => {
+    if (!selectedTimetableClassId && data.classes[0]?.id) {
+      setSelectedTimetableClassId(data.classes[0].id);
+    }
+  }, [data.classes, selectedTimetableClassId]);
+
+  useEffect(() => {
+    if (!gradeClassFilter && data.classes[0]?.id) {
+      setGradeClassFilter(data.classes[0].id);
+    }
+  }, [data.classes, gradeClassFilter]);
+
+  useEffect(() => {
+    if (!gradeSubjectFilter && data.subjects[0]?.id) {
+      setGradeSubjectFilter(data.subjects[0].id);
+    }
+  }, [data.subjects, gradeSubjectFilter]);
+
+  const classMap = byId(data.classes);
+  const subjectMap = byId(data.subjects);
+  const currentYear = data.academicYears.find((item) => item.is_current) ?? data.academicYears[0] ?? null;
+  const currentYearId = currentYear?.id;
+  const schoolSettings =
+    data.school.settings && typeof data.school.settings === "object"
+      ? (data.school.settings as Record<string, unknown>)
+      : {};
+  const schoolPhone = typeof schoolSettings.phone === "string" ? schoolSettings.phone : "";
+  const schoolContactEmail = typeof schoolSettings.contact_email === "string" ? schoolSettings.contact_email : "";
+  const schoolAddress = typeof schoolSettings.address === "string" ? schoolSettings.address : "";
+  const workingDayLabels = data.workingDays.map((item) => item.label).join(", ");
+
+  const initialsFor = (value: string) =>
+    value
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => part[0] ?? "")
+      .slice(0, 2)
+      .join("")
+      .toUpperCase();
+
+  const avatarTone = (seed: string) => {
+    const palette = [
+      "bg-violet-100 text-violet-700",
+      "bg-sky-100 text-sky-700",
+      "bg-emerald-100 text-emerald-700",
+      "bg-amber-100 text-amber-700",
+      "bg-rose-100 text-rose-700",
+    ];
+    const value = seed.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
+    return palette[value % palette.length];
+  };
+
+  const runAction = async (work: () => Promise<void>, successMessage: string) => {
+    try {
+      setBusy(true);
+      await work();
+      onNotify("success", successMessage);
+      await onRefresh();
+    } catch (error) {
+      onNotify("error", error instanceof Error ? error.message : "Action failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveWorkingDays = () =>
+    runAction(async () => {
+      unwrap(await supabase.from("working_days").delete().eq("school_id", data.school.id));
+      if (daySelection.length > 0) {
+        unwrap(
+          await supabase.from("working_days").insert(
+            daySelection.map((day) => ({
+              school_id: data.school.id,
+              day_of_week: day,
+              label: dayLabel(day),
+            })),
+          ),
+        );
+      }
+    }, "Working days saved.");
+
+  const createAcademicYear = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      if (yearForm.is_current) {
+        unwrap(await supabase.from("academic_years").update({ is_current: false }).eq("school_id", data.school.id));
+      }
+      unwrap(
+        await supabase.from("academic_years").insert({
+          school_id: data.school.id,
+          name: yearForm.name,
+          start_date: yearForm.start_date,
+          end_date: yearForm.end_date,
+          is_current: yearForm.is_current,
+        }),
+      );
+      setYearForm({ name: "", start_date: "", end_date: "", is_current: true });
+    }, "Academic year created.");
+  };
+
+  const createTimeSlot = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("time_slots").insert({
+          school_id: data.school.id,
+          label: slotForm.label,
+          start_time: slotForm.start_time,
+          end_time: slotForm.end_time,
+          sort_order: Number(slotForm.sort_order),
+        }),
+      );
+      setSlotForm({ label: "", start_time: "", end_time: "", sort_order: String(data.timeSlots.length + 2) });
+    }, "Time slot created.");
+  };
+
+  const createGrade = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("grade_levels").insert({
+          school_id: data.school.id,
+          name: gradeForm.name,
+          sort_order: Number(gradeForm.sort_order),
+        }),
+      );
+      setGradeForm({ name: "", sort_order: String(data.gradeLevels.length + 2) });
+    }, "Grade level created.");
+  };
+
+  const createSubject = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("subjects").insert({
+          school_id: data.school.id,
+          name: subjectForm.name,
+          code: subjectForm.code || null,
+        }),
+      );
+      setSubjectForm({ name: "", code: "" });
+    }, "Subject created.");
+  };
+
+  const createClass = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("classes").insert({
+          school_id: data.school.id,
+          name: classForm.name,
+          grade_level_id: classForm.grade_level_id,
+          academic_year_id: classForm.academic_year_id,
+        }),
+      );
+      setClassForm((prev) => ({ ...prev, name: "" }));
+    }, "Class created.");
+  };
+
+  const inviteTeacher = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      const { first_name, last_name } = parseName(teacherForm.full_name);
+      const response = await invokeFunctionJson<{ user_id: string }>("invite-user", {
+        school_id: data.school.id,
+        email: teacherForm.email,
+        role: "teacher",
+        first_name,
+        last_name,
+      });
+      if (teacherForm.subject_id) {
+        unwrap(
+          await supabase.from("teacher_subject_assignments").insert({
+            school_id: data.school.id,
+            teacher_id: response.user_id,
+            subject_id: teacherForm.subject_id,
+            class_id: teacherForm.class_id || null,
+          }),
+        );
+      }
+      setTeacherForm({
+        full_name: "",
+        email: "",
+        subject_id: data.subjects[0]?.id ?? "",
+        class_id: data.classes[0]?.id ?? "",
+      });
+      setShowTeacherForm(false);
+    }, "Teacher invited and assignment saved.");
+  };
+
+  const inviteStudent = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      const parsedStudent = parseName(studentForm.full_name);
+      const studentResponse = await invokeFunctionJson<{ user_id: string }>("invite-user", {
+        school_id: data.school.id,
+        email: studentForm.email,
+        role: "student",
+        first_name: parsedStudent.first_name,
+        last_name: parsedStudent.last_name,
+      });
+      unwrap(
+        await supabase.from("class_enrollments").insert({
+          school_id: data.school.id,
+          class_id: studentForm.class_id,
+          student_id: studentResponse.user_id,
+        }),
+      );
+      if (studentForm.parent_email.trim()) {
+        const parsedParent = parseName(studentForm.parent_name || studentForm.parent_email);
+        const parentResponse = await invokeFunctionJson<{ user_id: string }>("invite-user", {
+          school_id: data.school.id,
+          email: studentForm.parent_email,
+          role: "parent",
+          first_name: parsedParent.first_name,
+          last_name: parsedParent.last_name,
+        });
+        unwrap(
+          await supabase.from("parent_student_links").insert({
+            school_id: data.school.id,
+            parent_id: parentResponse.user_id,
+            student_id: studentResponse.user_id,
+            relationship: "parent",
+          }),
+        );
+      }
+      setStudentForm({
+        full_name: "",
+        email: "",
+        class_id: data.classes[0]?.id ?? "",
+        parent_name: "",
+        parent_email: "",
+      });
+      setShowStudentForm(false);
+    }, "Student invited and enrollment saved.");
+  };
+
+  const createTimetable = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("timetable_entries").insert({
+          school_id: data.school.id,
+          academic_year_id: timetableForm.academic_year_id,
+          working_day_id: timetableForm.working_day_id,
+          time_slot_id: timetableForm.time_slot_id,
+          class_id: timetableForm.class_id,
+          subject_id: timetableForm.subject_id,
+          teacher_id: timetableForm.teacher_id,
+        }),
+      );
+      setShowTimetableForm(false);
+    }, "Timetable entry saved.");
+  };
+
+  const publishAnnouncement = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runAction(async () => {
+      const announcement = unwrap(
+        await supabase
+          .from("announcements")
+          .insert({
+            school_id: data.school.id,
+            author_id: profile.id,
+            title: announcementForm.title,
+            body: announcementForm.body,
+            is_published: true,
+            published_at: new Date().toISOString(),
+          })
+          .select("id,school_id,author_id,title,body,is_published,published_at,created_at")
+          .single(),
+      ) as unknown as Announcement;
+
+      const target =
+        announcementForm.target_type === "role"
+          ? {
+              announcement_id: announcement.id,
+              target_type: "role",
+              target_role: announcementForm.target_role,
+            }
+          : announcementForm.target_type === "class"
+            ? {
+                announcement_id: announcement.id,
+                target_type: "class",
+                target_id: announcementForm.target_id,
+              }
+            : {
+                announcement_id: announcement.id,
+                target_type: "school",
+              };
+
+      unwrap(await supabase.from("announcement_targets").insert(target));
+      await invokeFunctionJson("send-announcement", { announcement_id: announcement.id });
+      setAnnouncementForm({
+        title: "",
+        body: "",
+        target_type: "school",
+        target_role: "student",
+        target_id: data.classes[0]?.id ?? "",
+      });
+      setShowAnnouncementForm(false);
+    }, "Announcement published and notifications queued.");
+  };
+
+  const sendMessage = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!messageForm.recipient_id) {
+      onNotify("error", "Choose someone to message first.");
+      return;
+    }
+    void runAction(async () => {
+      await sendMessageToRecipient({
+        schoolId: data.school.id,
+        senderId: profile.id,
+        recipientId: messageForm.recipient_id,
+        subject: messageForm.subject,
+        body: messageForm.body,
+      });
+      setMessageForm((prev) => ({
+        recipient_id: prev.recipient_id,
+        subject: "",
+        body: "",
+      }));
+    }, "Message sent.");
+  };
+
+  const filteredTeachers = data.teachers.filter((teacher) => {
+    const haystack = [teacher.name, teacher.email ?? "", teacher.assignments.join(" ")].join(" ").toLowerCase();
+    return haystack.includes(teacherQuery.trim().toLowerCase());
+  });
+
+  const filteredStudents = data.students.filter((student) => {
+    const haystack = [
+      student.name,
+      student.email ?? "",
+      student.className,
+      student.status,
+      student.parents.join(" "),
+    ]
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(studentQuery.trim().toLowerCase());
+  });
+
+  const filteredAnnouncements = data.announcements.filter((announcement) => {
+    const haystack = [
+      announcement.item.title,
+      announcement.item.body,
+      announcement.audience,
+      announcement.authorName,
+    ]
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(announcementQuery.trim().toLowerCase());
+  });
+
+  const classEnrollmentCounts = data.classes.map((item) => ({
+    id: item.id,
+    name: item.name,
+    count: data.students.filter((student) => student.className === item.name).length,
+  }));
+  const maxEnrollmentCount = Math.max(...classEnrollmentCounts.map((item) => item.count), 1);
+
+  const recipientMap = data.recipientOptions.reduce<Record<string, RecipientOption>>((acc, recipient) => {
+    acc[recipient.id] = recipient;
+    return acc;
+  }, {});
+
+  const conversationMap: Record<
+    string,
+    {
+      id: string;
+      recipient: RecipientOption;
+      messages: MessageBundle[];
+      preview: string;
+      lastMessageAt: string;
+    }
+  > = {};
+
+  [...data.messages]
+    .sort((a, b) => new Date(a.item.created_at).getTime() - new Date(b.item.created_at).getTime())
+    .forEach((bundle) => {
+      const recipient =
+        bundle.item.sender_id === profile.id
+          ? bundle.recipients[0] ?? { id: "unknown", label: "Unknown recipient", email: null }
+          : recipientMap[bundle.item.sender_id] ?? {
+              id: bundle.item.sender_id,
+              label: bundle.senderName,
+              email: null,
+            };
+      const existing = conversationMap[recipient.id] ?? {
+        id: recipient.id,
+        recipient,
+        messages: [],
+        preview: "",
+        lastMessageAt: bundle.item.created_at,
+      };
+      existing.messages.push(bundle);
+      existing.preview = bundle.item.body;
+      existing.lastMessageAt = bundle.item.created_at;
+      conversationMap[recipient.id] = existing;
+    });
+
+  const conversations = Object.values(conversationMap).sort(
+    (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime(),
+  );
+  const filteredConversations = conversations.filter((conversation) => {
+    const haystack = `${conversation.recipient.label} ${conversation.preview}`.toLowerCase();
+    return haystack.includes(messageQuery.trim().toLowerCase());
+  });
+  const activeConversation =
+    filteredConversations.find((conversation) => conversation.id === selectedConversationId) ??
+    filteredConversations[0] ??
+    null;
+
+  useEffect(() => {
+    if (filteredConversations.length > 0 && !filteredConversations.some((item) => item.id === selectedConversationId)) {
+      setSelectedConversationId(filteredConversations[0].id);
+    }
+  }, [filteredConversations, selectedConversationId]);
+
+  useEffect(() => {
+    if (activeConversation && messageForm.recipient_id !== activeConversation.recipient.id) {
+      setMessageForm((prev) => ({ ...prev, recipient_id: activeConversation.recipient.id }));
+      return;
+    }
+
+    if (!activeConversation && !messageForm.recipient_id && data.recipientOptions[0]?.id) {
+      setMessageForm((prev) => ({ ...prev, recipient_id: data.recipientOptions[0]?.id ?? "" }));
+    }
+  }, [activeConversation, data.recipientOptions, messageForm.recipient_id]);
+
+  const activeConversationMessages = activeConversation
+    ? [...activeConversation.messages].sort(
+        (a, b) => new Date(a.item.created_at).getTime() - new Date(b.item.created_at).getTime(),
+      )
+    : [];
+
+  const gradeRows = data.grades.filter((grade) => {
+    const matchesClass = !gradeClassFilter || grade.class_id === gradeClassFilter;
+    const matchesSubject = !gradeSubjectFilter || grade.subject_id === gradeSubjectFilter;
+    return matchesClass && matchesSubject;
+  });
+
+  const dashboardCards = [
+    {
+      label: "Teachers",
+      value: data.teachers.length,
+      sub: `${data.subjects.length} subjects covered`,
+      icon: <Users className="h-5 w-5" />,
+      tone: "bg-violet-100 text-violet-700",
+      view: "teachers",
+    },
+    {
+      label: "Students",
+      value: data.students.length,
+      sub: `${unique(data.students.flatMap((student) => student.parents)).length} parents linked`,
+      icon: <GraduationCap className="h-5 w-5" />,
+      tone: "bg-sky-100 text-sky-700",
+      view: "students",
+    },
+    {
+      label: "Subjects",
+      value: data.subjects.length,
+      sub: `${data.gradeLevels.length} grade levels`,
+      icon: <BookOpen className="h-5 w-5" />,
+      tone: "bg-emerald-100 text-emerald-700",
+      view: "academic",
+    },
+    {
+      label: "Classes",
+      value: data.classes.length,
+      sub: currentYear?.name ?? "Set current year",
+      icon: <Calendar className="h-5 w-5" />,
+      tone: "bg-amber-100 text-amber-700",
+      view: "timetable",
+    },
+  ] as const;
+
+  if (view === "settings") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["School Admin", "School Settings"]}
+          description={`Review the details your team uses across ${data.school.name}.`}
+        />
+        <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+          <Panel
+            title="School Information"
+            description="These details are shown across the workspace. Editing can be unlocked in a secure flow next."
+            action={<Badge tone="warning">View only</Badge>}
+          >
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="School name">
+                <Input value={data.school.name} readOnly />
+              </Field>
+              <Field label="Timezone">
+                <Input value={data.school.timezone} readOnly />
+              </Field>
+              <Field label="Slug">
+                <Input value={data.school.slug} readOnly />
+              </Field>
+              <Field label="Status">
+                <Input value={data.school.is_active ? "Active" : "Inactive"} readOnly />
+              </Field>
+              <Field label="Phone">
+                <Input value={schoolPhone} placeholder="Not added yet" readOnly />
+              </Field>
+              <Field label="Email">
+                <Input value={schoolContactEmail} placeholder="Not added yet" readOnly />
+              </Field>
+              <div className="md:col-span-2">
+                <Field label="Address">
+                  <Input value={schoolAddress} placeholder="Not added yet" readOnly />
+                </Field>
+              </div>
+            </div>
+          </Panel>
+
+          <Panel title="School Snapshot" description="A calm, quick summary for daily admin work.">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl bg-muted/40 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Current year</p>
+                <p className="mt-2 text-lg font-bold text-foreground">{currentYear?.name ?? "Not set yet"}</p>
+              </div>
+              <div className="rounded-2xl bg-muted/40 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Subscription</p>
+                <p className="mt-2 text-lg font-bold text-foreground">{titleCaseLabel(data.subscription?.status ?? "unknown")}</p>
+              </div>
+              <div className="rounded-2xl bg-muted/40 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Working days</p>
+                <p className="mt-2 text-sm font-semibold text-foreground">{workingDayLabels || "Not configured yet"}</p>
+              </div>
+              <div className="rounded-2xl bg-muted/40 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Last activity</p>
+                <p className="mt-2 text-sm font-semibold text-foreground">{formatDateTime(data.usageStat?.last_activity_at)}</p>
+              </div>
+            </div>
+          </Panel>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === "academic") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["School Admin", "Academic Setup"]}
+          description="Open one setup area at a time so schedules, grades, classes, and subjects stay easy to manage."
+        />
+        <div className="flex flex-wrap gap-2">
+          {[
+            ["working-days", "Working Days"],
+            ["time-slots", "Time Slots"],
+            ["academic-years", "Academic Year"],
+            ["grade-levels", "Grades"],
+            ["classes", "Classes"],
+            ["subjects", "Subjects"],
+          ].map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() =>
+                setAcademicSection(
+                  id as "working-days" | "time-slots" | "academic-years" | "grade-levels" | "classes" | "subjects",
+                )
+              }
+              className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                academicSection === id
+                  ? "border-primary bg-primary text-white shadow-sm"
+                  : "border-border bg-card text-muted-foreground hover:border-primary/30 hover:text-primary"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {academicSection === "working-days" ? (
+          <Panel title="Configure Working Days" description="Choose which days the school uses for teaching.">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {[1, 2, 3, 4, 5, 6].map((day) => (
+                <button
+                  key={day}
+                  type="button"
+                  onClick={() =>
+                    setDaySelection((prev) => (prev.includes(day) ? prev.filter((item) => item !== day) : [...prev, day]))
+                  }
+                  className={`rounded-2xl border px-4 py-4 text-left text-sm font-semibold transition ${
+                    daySelection.includes(day)
+                      ? "border-primary bg-secondary text-primary"
+                      : "border-border bg-card text-muted-foreground"
+                  }`}
+                >
+                  {dayLabel(day)}
+                </button>
+              ))}
+            </div>
+            <div className="mt-5">
+              <Button type="button" onClick={saveWorkingDays} disabled={busy}>
+                Save Working Days
+              </Button>
+            </div>
+          </Panel>
+        ) : null}
+
+        {academicSection === "time-slots" ? (
+          <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+            <Panel title="Add Time Slot" description="Build the daily teaching rhythm in order.">
+              <form className="grid gap-4" onSubmit={createTimeSlot}>
+                <Field label="Label">
+                  <Input value={slotForm.label} onChange={(event) => setSlotForm((prev) => ({ ...prev, label: event.target.value }))} required />
+                </Field>
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <Field label="Start">
+                    <Input type="time" value={slotForm.start_time} onChange={(event) => setSlotForm((prev) => ({ ...prev, start_time: event.target.value }))} required />
+                  </Field>
+                  <Field label="End">
+                    <Input type="time" value={slotForm.end_time} onChange={(event) => setSlotForm((prev) => ({ ...prev, end_time: event.target.value }))} required />
+                  </Field>
+                  <Field label="Order">
+                    <Input type="number" value={slotForm.sort_order} onChange={(event) => setSlotForm((prev) => ({ ...prev, sort_order: event.target.value }))} required />
+                  </Field>
+                </div>
+                <Button type="submit" disabled={busy}>
+                  Add Time Slot
+                </Button>
+              </form>
+            </Panel>
+            <Panel title="Current Time Slots">
+              <div className="space-y-3">
+                {data.timeSlots.length === 0 ? (
+                  <EmptyState message="No time slots yet." />
+                ) : (
+                  data.timeSlots.map((slot) => (
+                    <div key={slot.id} className="flex items-center justify-between rounded-2xl bg-muted/30 px-4 py-3">
+                      <div>
+                        <p className="font-semibold text-foreground">{slot.label}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {slot.start_time} - {slot.end_time}
+                        </p>
+                      </div>
+                      <Badge>#{slot.sort_order}</Badge>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Panel>
+          </div>
+        ) : null}
+
+        {academicSection === "academic-years" ? (
+          <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+            <Panel title="Add Academic Year" description="Keep one year marked as current for the whole school.">
+              <form className="grid gap-4" onSubmit={createAcademicYear}>
+                <Field label="Name">
+                  <Input value={yearForm.name} onChange={(event) => setYearForm((prev) => ({ ...prev, name: event.target.value }))} required />
+                </Field>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Start date">
+                    <Input type="date" value={yearForm.start_date} onChange={(event) => setYearForm((prev) => ({ ...prev, start_date: event.target.value }))} required />
+                  </Field>
+                  <Field label="End date">
+                    <Input type="date" value={yearForm.end_date} onChange={(event) => setYearForm((prev) => ({ ...prev, end_date: event.target.value }))} required />
+                  </Field>
+                </div>
+                <label className="flex items-center gap-3 text-sm font-semibold text-foreground">
+                  <input type="checkbox" checked={yearForm.is_current} onChange={(event) => setYearForm((prev) => ({ ...prev, is_current: event.target.checked }))} />
+                  Set this as the current year
+                </label>
+                <Button type="submit" disabled={busy}>
+                  Create Academic Year
+                </Button>
+              </form>
+            </Panel>
+            <Panel title="Academic Year List">
+              <div className="space-y-3">
+                {data.academicYears.length === 0 ? (
+                  <EmptyState message="No academic years yet." />
+                ) : (
+                  data.academicYears.map((year) => (
+                    <div key={year.id} className="rounded-2xl bg-muted/30 p-4">
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-foreground">{year.name}</p>
+                        {year.is_current ? <Badge tone="success">Current</Badge> : null}
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {formatDate(year.start_date)} - {formatDate(year.end_date)}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Panel>
+          </div>
+        ) : null}
+
+        {academicSection === "grade-levels" ? (
+          <div className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
+            <Panel title="Add Grade Level">
+              <form className="grid gap-4" onSubmit={createGrade}>
+                <Field label="Grade name">
+                  <Input value={gradeForm.name} onChange={(event) => setGradeForm((prev) => ({ ...prev, name: event.target.value }))} required />
+                </Field>
+                <Field label="Sort order">
+                  <Input type="number" value={gradeForm.sort_order} onChange={(event) => setGradeForm((prev) => ({ ...prev, sort_order: event.target.value }))} />
+                </Field>
+                <Button type="submit" disabled={busy}>
+                  Add Grade
+                </Button>
+              </form>
+            </Panel>
+            <Panel title="Grade Levels">
+              <div className="grid gap-3 sm:grid-cols-2">
+                {data.gradeLevels.length === 0 ? (
+                  <EmptyState message="No grade levels yet." />
+                ) : (
+                  data.gradeLevels.map((grade) => (
+                    <div key={grade.id} className="rounded-2xl bg-muted/30 p-4">
+                      <p className="font-semibold text-foreground">{grade.name}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">Order {grade.sort_order}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Panel>
+          </div>
+        ) : null}
+
+        {academicSection === "classes" ? (
+          <div className="space-y-6">
+            <Panel title="Create Class" description="Pair each class with a grade level and academic year.">
+              <form className="grid gap-4 lg:grid-cols-4" onSubmit={createClass}>
+                <Field label="Class name">
+                  <Input value={classForm.name} onChange={(event) => setClassForm((prev) => ({ ...prev, name: event.target.value }))} required />
+                </Field>
+                <Field label="Grade level">
+                  <Select value={classForm.grade_level_id} onChange={(event) => setClassForm((prev) => ({ ...prev, grade_level_id: event.target.value }))}>
+                    {data.gradeLevels.map((grade) => (
+                      <option key={grade.id} value={grade.id}>
+                        {grade.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="Academic year">
+                  <Select value={classForm.academic_year_id} onChange={(event) => setClassForm((prev) => ({ ...prev, academic_year_id: event.target.value }))}>
+                    {data.academicYears.map((year) => (
+                      <option key={year.id} value={year.id}>
+                        {year.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <div className="flex items-end">
+                  <Button type="submit" disabled={busy || !data.gradeLevels.length || !data.academicYears.length} className="w-full">
+                    Create Class
+                  </Button>
+                </div>
+              </form>
+            </Panel>
+            <Panel title="Class Directory">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {data.classes.length === 0 ? (
+                  <EmptyState message="No classes yet." />
+                ) : (
+                  data.classes.map((item) => (
+                    <div key={item.id} className="rounded-2xl bg-muted/30 p-4">
+                      <p className="font-semibold text-foreground">{item.name}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {data.gradeLevels.find((grade) => grade.id === item.grade_level_id)?.name ?? "Unknown grade"} / {data.academicYears.find((year) => year.id === item.academic_year_id)?.name ?? "Unknown year"}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Panel>
+          </div>
+        ) : null}
+
+        {academicSection === "subjects" ? (
+          <div className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
+            <Panel title="Add Subject">
+              <form className="grid gap-4" onSubmit={createSubject}>
+                <Field label="Subject name">
+                  <Input value={subjectForm.name} onChange={(event) => setSubjectForm((prev) => ({ ...prev, name: event.target.value }))} required />
+                </Field>
+                <Field label="Code">
+                  <Input value={subjectForm.code} onChange={(event) => setSubjectForm((prev) => ({ ...prev, code: event.target.value }))} />
+                </Field>
+                <Button type="submit" disabled={busy}>
+                  Add Subject
+                </Button>
+              </form>
+            </Panel>
+            <Panel title="Subject List">
+              <div className="grid gap-3 sm:grid-cols-2">
+                {data.subjects.length === 0 ? (
+                  <EmptyState message="No subjects yet." />
+                ) : (
+                  data.subjects.map((subject) => (
+                    <div key={subject.id} className="rounded-2xl bg-muted/30 p-4">
+                      <p className="font-semibold text-foreground">{subject.name}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{subject.code || "No code yet"}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Panel>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (view === "teachers") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["School Admin", "Teachers"]}
+          description="Keep the teaching team organized with a calmer workspace and more room for assignments."
+          action={
+            <Button type="button" onClick={() => setShowTeacherForm((prev) => !prev)}>
+              <UserPlus className="h-4 w-4" />
+              {showTeacherForm ? "Hide form" : "Add Teacher"}
+            </Button>
+          }
+        />
+        {showTeacherForm ? (
+          <Panel title="Invite Teacher" description="Invite a teacher and connect them to a subject and class.">
+            <form className="grid gap-4 lg:grid-cols-4" onSubmit={inviteTeacher}>
+              <Field label="Full name">
+                <Input value={teacherForm.full_name} onChange={(event) => setTeacherForm((prev) => ({ ...prev, full_name: event.target.value }))} required />
+              </Field>
+              <Field label="Email">
+                <Input type="email" value={teacherForm.email} onChange={(event) => setTeacherForm((prev) => ({ ...prev, email: event.target.value }))} required />
+              </Field>
+              <Field label="Subject">
+                <Select value={teacherForm.subject_id} onChange={(event) => setTeacherForm((prev) => ({ ...prev, subject_id: event.target.value }))}>
+                  {data.subjects.map((subject) => (
+                    <option key={subject.id} value={subject.id}>
+                      {subject.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Class">
+                <Select value={teacherForm.class_id} onChange={(event) => setTeacherForm((prev) => ({ ...prev, class_id: event.target.value }))}>
+                  {data.classes.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <div className="lg:col-span-4">
+                <Button type="submit" disabled={busy}>
+                  Invite Teacher
+                </Button>
+              </div>
+            </form>
+          </Panel>
+        ) : null}
+        <Panel title="Teaching Team" description="Search by name, email, or assignment.">
+          <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="relative w-full max-w-md">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input className="pl-10" placeholder="Search teachers..." value={teacherQuery} onChange={(event) => setTeacherQuery(event.target.value)} />
+            </div>
+            <Badge>{filteredTeachers.length} teachers</Badge>
+          </div>
+          {filteredTeachers.length === 0 ? (
+            <EmptyState message="No teachers match this search yet." />
+          ) : (
+            <div className="overflow-hidden rounded-2xl border border-border">
+              <div className="hidden grid-cols-[1.4fr_1.1fr_0.9fr] gap-4 border-b border-border bg-muted/20 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground lg:grid">
+                <p>Teacher</p>
+                <p>Assignments</p>
+                <p>Status</p>
+              </div>
+              <div className="divide-y divide-border">
+                {filteredTeachers.map((teacher) => (
+                  <div key={teacher.userId} className="grid gap-4 px-5 py-4 lg:grid-cols-[1.4fr_1.1fr_0.9fr] lg:items-center">
+                    <div className="flex items-center gap-3">
+                      <div className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold ${avatarTone(teacher.userId)}`}>
+                        {initialsFor(teacher.name)}
+                      </div>
+                      <div>
+                        <p className="font-semibold text-foreground">{teacher.name}</p>
+                        <p className="text-sm text-muted-foreground">{teacher.email || "No email"}</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {teacher.assignments.length === 0 ? <Badge>No assignments yet</Badge> : teacher.assignments.map((assignment) => <Badge key={assignment}>{assignment}</Badge>)}
+                    </div>
+                    <div>
+                      <Badge tone="success">Active</Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "students") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["School Admin", "Students"]}
+          description="Keep enrollment, parent links, and exports in one cleaner workspace."
+          action={
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="secondary" onClick={() => void downloadExport("students", data.school.id)}>
+                <Download className="h-4 w-4" />
+                Export Students
+              </Button>
+              <Button type="button" onClick={() => setShowStudentForm((prev) => !prev)}>
+                <UserPlus className="h-4 w-4" />
+                {showStudentForm ? "Hide form" : "Add Student"}
+              </Button>
+            </div>
+          }
+        />
+        {showStudentForm ? (
+          <Panel title="Invite Student" description="Invite a student, place them in a class, and optionally connect a parent.">
+            <form className="grid gap-4 lg:grid-cols-4" onSubmit={inviteStudent}>
+              <Field label="Student name">
+                <Input value={studentForm.full_name} onChange={(event) => setStudentForm((prev) => ({ ...prev, full_name: event.target.value }))} required />
+              </Field>
+              <Field label="Student email">
+                <Input type="email" value={studentForm.email} onChange={(event) => setStudentForm((prev) => ({ ...prev, email: event.target.value }))} required />
+              </Field>
+              <Field label="Class">
+                <Select value={studentForm.class_id} onChange={(event) => setStudentForm((prev) => ({ ...prev, class_id: event.target.value }))}>
+                  {data.classes.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Parent name">
+                <Input value={studentForm.parent_name} onChange={(event) => setStudentForm((prev) => ({ ...prev, parent_name: event.target.value }))} />
+              </Field>
+              <Field label="Parent email">
+                <Input type="email" value={studentForm.parent_email} onChange={(event) => setStudentForm((prev) => ({ ...prev, parent_email: event.target.value }))} />
+              </Field>
+              <div className="lg:col-span-4">
+                <Button type="submit" disabled={busy || !studentForm.class_id}>
+                  Invite Student
+                </Button>
+              </div>
+            </form>
+          </Panel>
+        ) : null}
+        <Panel
+          title="Student Directory"
+          description="Search by student, class, parent, or status."
+          action={
+            <Button type="button" variant="secondary" onClick={() => void downloadExport("final_grades", data.school.id, currentYearId)}>
+              <Download className="h-4 w-4" />
+              Export Grades
+            </Button>
+          }
+        >
+          <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="relative w-full max-w-md">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input className="pl-10" placeholder="Search students..." value={studentQuery} onChange={(event) => setStudentQuery(event.target.value)} />
+            </div>
+            <Badge>{filteredStudents.length} students</Badge>
+          </div>
+          {filteredStudents.length === 0 ? (
+            <EmptyState message="No students match this search yet." />
+          ) : (
+            <div className="overflow-hidden rounded-2xl border border-border">
+              <div className="hidden grid-cols-[1.45fr_0.8fr_1fr_0.75fr] gap-4 border-b border-border bg-muted/20 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground lg:grid">
+                <p>Student</p>
+                <p>Class</p>
+                <p>Parent</p>
+                <p>Status</p>
+              </div>
+              <div className="divide-y divide-border">
+                {filteredStudents.map((student) => (
+                  <div key={student.userId} className="grid gap-4 px-5 py-4 lg:grid-cols-[1.45fr_0.8fr_1fr_0.75fr] lg:items-center">
+                    <div className="flex items-center gap-3">
+                      <div className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold ${avatarTone(student.userId)}`}>
+                        {initialsFor(student.name)}
+                      </div>
+                      <div>
+                        <p className="font-semibold text-foreground">{student.name}</p>
+                        <p className="text-sm text-muted-foreground">{student.email || "No email"}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <Badge>{student.className}</Badge>
+                    </div>
+                    <div className="text-sm text-muted-foreground">{student.parents.length > 0 ? student.parents.join(", ") : "Not linked yet"}</div>
+                    <div>
+                      <Badge tone={student.status === "active" ? "success" : "warning"}>{titleCaseLabel(student.status)}</Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "timetable") {
+    const timetableEntries = data.timetable.filter((entry) => !selectedTimetableClassId || entry.class_id === selectedTimetableClassId);
+
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["School Admin", "Timetable"]}
+          description="Work on one class at a time so the schedule stays readable even as it grows."
+          action={
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" onClick={() => setShowTimetableForm((prev) => !prev)}>
+                <Plus className="h-4 w-4" />
+                {showTimetableForm ? "Hide form" : "Add Entry"}
+              </Button>
+              <Button type="button" variant="secondary" onClick={() => onNotify("info", "Auto-generation can be added next. The timetable layout is ready for it.")}>
+                <Sparkles className="h-4 w-4" />
+                Auto Generate
+              </Button>
+            </div>
+          }
+        />
+        {showTimetableForm ? (
+          <Panel title="Add Timetable Entry" description="Assign one lesson block to a class, day, and time.">
+            <form className="grid gap-4 lg:grid-cols-3" onSubmit={createTimetable}>
+              <Field label="Academic year">
+                <Select value={timetableForm.academic_year_id} onChange={(event) => setTimetableForm((prev) => ({ ...prev, academic_year_id: event.target.value }))}>
+                  {data.academicYears.map((year) => (
+                    <option key={year.id} value={year.id}>
+                      {year.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Working day">
+                <Select value={timetableForm.working_day_id} onChange={(event) => setTimetableForm((prev) => ({ ...prev, working_day_id: event.target.value }))}>
+                  {data.workingDays.map((day) => (
+                    <option key={day.id} value={day.id}>
+                      {day.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Time slot">
+                <Select value={timetableForm.time_slot_id} onChange={(event) => setTimetableForm((prev) => ({ ...prev, time_slot_id: event.target.value }))}>
+                  {data.timeSlots.map((slot) => (
+                    <option key={slot.id} value={slot.id}>
+                      {slot.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Class">
+                <Select value={timetableForm.class_id} onChange={(event) => setTimetableForm((prev) => ({ ...prev, class_id: event.target.value }))}>
+                  {data.classes.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Subject">
+                <Select value={timetableForm.subject_id} onChange={(event) => setTimetableForm((prev) => ({ ...prev, subject_id: event.target.value }))}>
+                  {data.subjects.map((subject) => (
+                    <option key={subject.id} value={subject.id}>
+                      {subject.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Teacher">
+                <Select value={timetableForm.teacher_id} onChange={(event) => setTimetableForm((prev) => ({ ...prev, teacher_id: event.target.value }))}>
+                  {data.teachers.map((teacher) => (
+                    <option key={teacher.userId} value={teacher.userId}>
+                      {teacher.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <div className="lg:col-span-3">
+                <Button type="submit" disabled={busy || !data.classes.length || !data.subjects.length || !data.teachers.length || !data.timeSlots.length || !data.workingDays.length}>
+                  Save Timetable Entry
+                </Button>
+              </div>
+            </form>
+          </Panel>
+        ) : null}
+        <Panel title="Weekly Timetable" description="Review one class at a time in a roomier layout.">
+          <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap items-center gap-3">
+              <Select value={selectedTimetableClassId} onChange={(event) => setSelectedTimetableClassId(event.target.value)} className="min-w-[180px]">
+                {data.classes.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </Select>
+              {currentYear ? <Badge tone="success">{currentYear.name}</Badge> : null}
+            </div>
+            <Button type="button" variant="secondary" onClick={() => onNotify("info", "Publishing can be added when you want to share the timetable outside admin view.")}>
+              Publish Timetable
+            </Button>
+          </div>
+          {!data.classes.length || !data.timeSlots.length || !data.workingDays.length ? (
+            <EmptyState message="Add classes, time slots, and working days first to build the timetable." />
+          ) : (
+            <div className="overflow-x-auto rounded-2xl border border-border">
+              <table className="min-w-full border-collapse">
+                <thead className="bg-muted/20">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Time</th>
+                    {data.workingDays.map((day) => (
+                      <th key={day.id} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        {day.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.timeSlots.map((slot) => (
+                    <tr key={slot.id} className="border-t border-border">
+                      <td className="whitespace-nowrap px-4 py-4 text-sm font-semibold text-foreground">{slot.label}</td>
+                      {data.workingDays.map((day) => {
+                        const entry = timetableEntries.find((item) => item.time_slot_id === slot.id && item.working_day_id === day.id);
+                        return (
+                          <td key={day.id} className="px-4 py-4 align-top">
+                            {entry ? (
+                              <div className="rounded-2xl bg-secondary px-3 py-3 text-sm">
+                                <p className="font-semibold text-primary">{subjectMap[entry.subject_id]?.name ?? "Subject"}</p>
+                                <p className="mt-1 text-xs text-muted-foreground">{data.teachers.find((teacher) => teacher.userId === entry.teacher_id)?.name ?? "Teacher"}</p>
+                              </div>
+                            ) : (
+                              <span className="text-sm text-muted-foreground">-</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "grades") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["School Admin", "Final Grades"]}
+          description="Filter by class and subject so grade review stays roomy even when records grow."
+          action={
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" onClick={() => onNotify("info", "CSV upload can be added next. The review table is ready for it.")}>
+                Upload CSV
+              </Button>
+              <Button type="button" variant="secondary" onClick={() => void downloadExport("final_grades", data.school.id, currentYearId)}>
+                <Download className="h-4 w-4" />
+                Export PDF
+              </Button>
+            </div>
+          }
+        />
+        <Panel title="Final Grade Register" description="Use the filters to focus on one class or subject at a time.">
+          <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center">
+            <Select value={gradeClassFilter} onChange={(event) => setGradeClassFilter(event.target.value)} className="max-w-[220px]">
+              {data.classes.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </Select>
+            <Select value={gradeSubjectFilter} onChange={(event) => setGradeSubjectFilter(event.target.value)} className="max-w-[220px]">
+              {data.subjects.map((subject) => (
+                <option key={subject.id} value={subject.id}>
+                  {subject.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          {gradeRows.length === 0 ? (
+            <EmptyState message="No final grades match these filters yet." />
+          ) : (
+            <div className="overflow-hidden rounded-2xl border border-border">
+              <div className="hidden grid-cols-[1.25fr_0.8fr_0.8fr_0.8fr_0.7fr_0.9fr] gap-4 border-b border-border bg-muted/20 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground lg:grid">
+                <p>Student</p>
+                <p>Class</p>
+                <p>Subject</p>
+                <p>Score</p>
+                <p>Letter</p>
+                <p>Status</p>
+              </div>
+              <div className="divide-y divide-border">
+                {gradeRows.map((grade) => {
+                  const student = data.students.find((item) => item.userId === grade.student_id);
+                  return (
+                    <div key={grade.id} className="grid gap-4 px-5 py-4 lg:grid-cols-[1.25fr_0.8fr_0.8fr_0.8fr_0.7fr_0.9fr] lg:items-center">
+                      <div className="flex items-center gap-3">
+                        <div className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold ${avatarTone(grade.student_id)}`}>
+                          {initialsFor(student?.name ?? "Student")}
+                        </div>
+                        <div>
+                          <p className="font-semibold text-foreground">{student?.name ?? "Unknown student"}</p>
+                          <p className="text-sm text-muted-foreground">{student?.email || "No email"}</p>
+                        </div>
+                      </div>
+                      <p className="text-sm text-foreground">{classMap[grade.class_id]?.name ?? "Unknown class"}</p>
+                      <p className="text-sm text-foreground">{subjectMap[grade.subject_id]?.name ?? "Unknown subject"}</p>
+                      <p className="text-sm font-semibold text-foreground">{grade.grade_value ?? "-"}</p>
+                      <p className="text-sm font-semibold text-foreground">{grade.grade_letter || "-"}</p>
+                      <div>
+                        <Badge tone={grade.status === "approved" ? "success" : "warning"}>{titleCaseLabel(grade.status)}</Badge>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "announcements") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["School Admin", "Announcements"]}
+          description="Share updates without crowding the page. Open the writer only when you need it."
+          action={
+            <Button type="button" onClick={() => setShowAnnouncementForm((prev) => !prev)}>
+              <Plus className="h-4 w-4" />
+              {showAnnouncementForm ? "Hide form" : "New Announcement"}
+            </Button>
+          }
+        />
+        {showAnnouncementForm ? (
+          <Panel title="Publish Announcement" description="Share an update with the whole school, one role, or one class.">
+            <form className="grid gap-4 lg:grid-cols-2" onSubmit={publishAnnouncement}>
+              <Field label="Title">
+                <Input value={announcementForm.title} onChange={(event) => setAnnouncementForm((prev) => ({ ...prev, title: event.target.value }))} required />
+              </Field>
+              <Field label="Audience type">
+                <Select value={announcementForm.target_type} onChange={(event) => setAnnouncementForm((prev) => ({ ...prev, target_type: event.target.value }))}>
+                  <option value="school">Whole school</option>
+                  <option value="role">Role</option>
+                  <option value="class">Class</option>
+                </Select>
+              </Field>
+              {announcementForm.target_type === "role" ? (
+                <Field label="Role">
+                  <Select value={announcementForm.target_role} onChange={(event) => setAnnouncementForm((prev) => ({ ...prev, target_role: event.target.value }))}>
+                    <option value="teacher">Teachers</option>
+                    <option value="student">Students</option>
+                    <option value="parent">Parents</option>
+                    <option value="school_admin">School admins</option>
+                  </Select>
+                </Field>
+              ) : null}
+              {announcementForm.target_type === "class" ? (
+                <Field label="Class">
+                  <Select value={announcementForm.target_id} onChange={(event) => setAnnouncementForm((prev) => ({ ...prev, target_id: event.target.value }))}>
+                    {data.classes.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              ) : null}
+              <div className="lg:col-span-2">
+                <Field label="Body">
+                  <TextArea rows={5} value={announcementForm.body} onChange={(event) => setAnnouncementForm((prev) => ({ ...prev, body: event.target.value }))} required />
+                </Field>
+              </div>
+              <div className="lg:col-span-2">
+                <Button type="submit" disabled={busy}>
+                  <Megaphone className="h-4 w-4" />
+                  Publish Announcement
+                </Button>
+              </div>
+            </form>
+          </Panel>
+        ) : null}
+        <Panel title="Announcement Feed" description="Search published updates by title, audience, or content.">
+          <div className="mb-4 relative max-w-md">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input className="pl-10" placeholder="Search announcements..." value={announcementQuery} onChange={(event) => setAnnouncementQuery(event.target.value)} />
+          </div>
+          <div className="space-y-4">
+            {filteredAnnouncements.length === 0 ? (
+              <EmptyState message="No announcements match this search yet." />
+            ) : (
+              filteredAnnouncements.map((announcement) => (
+                <div key={announcement.item.id} className="rounded-[1.6rem] border border-border bg-card px-5 py-5 shadow-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge>{announcement.audience}</Badge>
+                    <p className="text-sm text-muted-foreground">{formatDate(announcement.item.published_at || announcement.item.created_at)}</p>
+                  </div>
+                  <p className="mt-3 text-xl font-bold text-foreground">{announcement.item.title}</p>
+                  <p className="mt-2 text-sm leading-6 text-muted-foreground">{announcement.item.body}</p>
+                  <p className="mt-3 text-xs text-muted-foreground">By {announcement.authorName}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "messages") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail items={["School Admin", "Messages"]} description="A larger conversation view helps when message history starts growing." />
+        <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+          <div className="grid min-h-[680px] xl:grid-cols-[320px_1fr]">
+            <div className="border-b border-border xl:border-b-0 xl:border-r">
+              <div className="border-b border-border p-4">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input className="pl-10" placeholder="Search messages..." value={messageQuery} onChange={(event) => setMessageQuery(event.target.value)} />
+                </div>
+              </div>
+              <div className="max-h-[620px] overflow-y-auto">
+                {filteredConversations.length === 0 ? (
+                  <div className="p-4">
+                    <EmptyState message="No visible conversations yet." />
+                  </div>
+                ) : (
+                  filteredConversations.map((conversation) => (
+                    <button
+                      key={conversation.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedConversationId(conversation.id);
+                        setMessageForm((prev) => ({ ...prev, recipient_id: conversation.recipient.id }));
+                      }}
+                      className={`flex w-full items-start gap-3 border-b border-border px-4 py-4 text-left transition ${activeConversation?.id === conversation.id ? "bg-secondary/40" : "hover:bg-muted/20"}`}
+                    >
+                      <div className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold ${avatarTone(conversation.id)}`}>
+                        {initialsFor(conversation.recipient.label)}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="truncate font-semibold text-foreground">{conversation.recipient.label}</p>
+                          <span className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTime(conversation.lastMessageAt)}</span>
+                        </div>
+                        <p className="mt-1 truncate text-sm text-muted-foreground">{conversation.preview}</p>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+            <div className="flex min-h-[680px] flex-col">
+              <div className="border-b border-border px-5 py-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold ${avatarTone(activeConversation?.id ?? "new")}`}>
+                      {initialsFor(activeConversation?.recipient.label ?? "New chat")}
+                    </div>
+                    <div>
+                      <p className="font-semibold text-foreground">{activeConversation?.recipient.label || "Choose a recipient"}</p>
+                      <p className="text-sm text-muted-foreground">{activeConversation?.recipient.email || "Private conversation"}</p>
+                    </div>
+                  </div>
+                  <Select
+                    value={messageForm.recipient_id}
+                    onChange={(event) => {
+                      const nextId = event.target.value;
+                      setSelectedConversationId(nextId);
+                      setMessageForm((prev) => ({ ...prev, recipient_id: nextId }));
+                    }}
+                    className="max-w-sm"
+                  >
+                    {data.recipientOptions.map((recipient) => (
+                      <option key={recipient.id} value={recipient.id}>
+                        {recipient.label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+              <div className="flex-1 space-y-4 overflow-y-auto bg-muted/10 p-5">
+                {activeConversationMessages.length === 0 ? (
+                  <EmptyState message="Start a message here and the conversation will appear in this space." />
+                ) : (
+                  activeConversationMessages.map((message) => {
+                    const mine = message.item.sender_id === profile.id;
+                    return (
+                      <div key={message.item.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                        <div className={`max-w-[36rem] rounded-[1.6rem] px-4 py-4 shadow-sm ${mine ? "bg-primary text-white" : "bg-card text-foreground"}`}>
+                          {message.item.subject ? <p className={`text-xs font-semibold ${mine ? "text-white/80" : "text-muted-foreground"}`}>{message.item.subject}</p> : null}
+                          <p className="mt-1 text-sm leading-6">{message.item.body}</p>
+                          <p className={`mt-2 text-xs ${mine ? "text-white/70" : "text-muted-foreground"}`}>{formatDateTime(message.item.created_at)}</p>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+              <form onSubmit={sendMessage} className="border-t border-border bg-card p-5">
+                <div className="grid gap-3 md:grid-cols-[220px_minmax(0,1fr)_auto]">
+                  <Input placeholder="Subject (optional)" value={messageForm.subject} onChange={(event) => setMessageForm((prev) => ({ ...prev, subject: event.target.value }))} />
+                  <Input placeholder="Type a message..." value={messageForm.body} onChange={(event) => setMessageForm((prev) => ({ ...prev, body: event.target.value }))} required />
+                  <Button type="submit" disabled={busy || !messageForm.recipient_id}>
+                    <Send className="h-4 w-4" />
+                    Send
+                  </Button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8">
+      <SectionTrail items={["School Admin", data.school.name, "Dashboard"]} description="A smoother home view with quick paths into the parts you use most." action={currentYear ? <Badge tone="success">{currentYear.name}</Badge> : undefined} />
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {dashboardCards.map((card) => (
+          <button key={card.label} type="button" onClick={() => onChangeView(card.view)} className="text-left">
+            <div className="rounded-[1.8rem] border border-border bg-card px-5 py-5 shadow-sm transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md">
+              <div className="flex items-center gap-4">
+                <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${card.tone}`}>{card.icon}</div>
+                <div>
+                  <p className="text-sm font-semibold text-muted-foreground">{card.label}</p>
+                  <p className="mt-1 text-3xl font-bold text-foreground">{card.value}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{card.sub}</p>
+                </div>
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+      <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+        <Panel title="Student Enrollment by Class" description="A quick visual read on how classes are filling up.">
+          {classEnrollmentCounts.length === 0 ? (
+            <EmptyState message="Add classes and students to see enrollment here." />
+          ) : (
+            <div className="rounded-[1.8rem] bg-muted/20 p-5">
+              <div className="flex h-72 items-end gap-4">
+                {classEnrollmentCounts.map((item) => {
+                  const height = Math.max((item.count / maxEnrollmentCount) * 100, item.count === 0 ? 8 : 18);
+                  return (
+                    <div key={item.id} className="flex flex-1 flex-col items-center gap-3">
+                      <span className="text-sm font-semibold text-muted-foreground">{item.count}</span>
+                      <div className="flex h-56 w-full items-end rounded-2xl bg-white/60 p-2">
+                        <div className="w-full rounded-2xl bg-primary/80" style={{ height: `${height}%` }} />
+                      </div>
+                      <span className="text-sm font-semibold text-foreground">{item.name}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </Panel>
+        <Panel title="Recent Announcements" description="See the latest school-wide messages without leaving the dashboard.">
+          <div className="space-y-3">
+            {data.announcements.slice(0, 4).length === 0 ? (
+              <EmptyState message="No announcements have been published yet." />
+            ) : (
+              data.announcements.slice(0, 4).map((announcement) => (
+                <div key={announcement.item.id} className="rounded-2xl bg-secondary/35 px-4 py-4">
+                  <div className="flex items-center gap-2">
+                    <Badge>{announcement.audience}</Badge>
+                    <p className="text-xs text-muted-foreground">{formatDate(announcement.item.published_at || announcement.item.created_at)}</p>
+                  </div>
+                  <p className="mt-3 font-semibold text-foreground">{announcement.item.title}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{announcement.item.body}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </Panel>
+      </div>
+      <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+        <Panel title="School Snapshot" description="Plan, status, timezone, and recent activity in one place.">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl bg-muted/30 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Subscription</p>
+              <p className="mt-2 text-lg font-bold text-foreground">{titleCaseLabel(data.subscription?.status ?? "unknown")}</p>
+            </div>
+            <div className="rounded-2xl bg-muted/30 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Timezone</p>
+              <p className="mt-2 text-lg font-bold text-foreground">{data.school.timezone}</p>
+            </div>
+            <div className="rounded-2xl bg-muted/30 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Slug</p>
+              <p className="mt-2 text-lg font-bold text-foreground">{data.school.slug}</p>
+            </div>
+            <div className="rounded-2xl bg-muted/30 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Last activity</p>
+              <p className="mt-2 text-sm font-semibold text-foreground">{formatDateTime(data.usageStat?.last_activity_at)}</p>
+            </div>
+          </div>
+        </Panel>
+        <Panel title="Quick Setup" description="Jump straight into the places that usually need daily attention.">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button type="button" onClick={() => onChangeView("academic")} className="rounded-2xl border border-border bg-muted/20 p-4 text-left transition hover:border-primary/30 hover:bg-muted/30">
+              <p className="font-semibold text-foreground">Academic Setup</p>
+              <p className="mt-1 text-sm text-muted-foreground">Working days, time slots, grade levels, classes, and subjects.</p>
+            </button>
+            <button type="button" onClick={() => onChangeView("messages")} className="rounded-2xl border border-border bg-muted/20 p-4 text-left transition hover:border-primary/30 hover:bg-muted/30">
+              <p className="font-semibold text-foreground">Messages</p>
+              <p className="mt-1 text-sm text-muted-foreground">Open the larger conversation view when your inbox gets busy.</p>
+            </button>
+            <button type="button" onClick={() => onChangeView("announcements")} className="rounded-2xl border border-border bg-muted/20 p-4 text-left transition hover:border-primary/30 hover:bg-muted/30">
+              <p className="font-semibold text-foreground">Announcements</p>
+              <p className="mt-1 text-sm text-muted-foreground">Publish updates for the whole school or one audience.</p>
+            </button>
+            <button type="button" onClick={() => onChangeView("settings")} className="rounded-2xl border border-border bg-muted/20 p-4 text-left transition hover:border-primary/30 hover:bg-muted/30">
+              <p className="font-semibold text-foreground">School Settings</p>
+              <p className="mt-1 text-sm text-muted-foreground">Review school details and current setup in one calmer page.</p>
+            </button>
+          </div>
+        </Panel>
+      </div>
     </div>
   );
 }
@@ -7975,6 +9861,7 @@ function ParentPortal({
 
 export default function SmartClassLiveApp() {
   const [session, setSession] = useState<Session | null>(null);
+  const [pathname, setPathname] = useState(getInitialPath);
   const [bootLoading, setBootLoading] = useState(true);
   const [membershipLoading, setMembershipLoading] = useState(false);
   const [bootstrapLoading, setBootstrapLoading] = useState(false);
@@ -7984,9 +9871,22 @@ export default function SmartClassLiveApp() {
   const [workspaceKey, setWorkspaceKey] = useState<string | null>(null);
   const [workspaceOverride, setWorkspaceOverride] = useState<Workspace | null>(null);
   const [data, setData] = useState<LoadedWorkspaceData | null>(null);
-  const [view, setView] = useState("dashboard");
+  const [view, setView] = useState(DEFAULT_VIEW);
   const [flash, setFlash] = useState<FlashState>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const navigateTo = (nextPath: string, replace = false) => {
+    const normalized = normalizePath(nextPath);
+    if (typeof window !== "undefined" && normalizePath(window.location.pathname) !== normalized) {
+      window.history[replace ? "replaceState" : "pushState"]({}, "", normalized);
+    }
+    setPathname(normalized);
+  };
+
+  const navigateToView = (nextView: string, replace = false) => {
+    setView(nextView);
+    navigateTo(buildViewPath(nextView), replace);
+  };
 
   const refreshMemberships = async (targetUser: Session["user"]) => {
     setMembershipLoading(true);
@@ -7998,7 +9898,6 @@ export default function SmartClassLiveApp() {
       const stored = window.localStorage.getItem(`smart-class.workspace.${targetUser.id}`);
       const nextWorkspace = result.workspaces.find((item) => item.key === stored) ?? result.workspaces[0] ?? null;
       setWorkspaceKey(nextWorkspace?.key ?? null);
-      setView("dashboard");
       setError(result.workspaces.length === 0 ? "This account does not have access to any school or admin area yet." : null);
     } catch (membershipError) {
       setError(membershipError instanceof Error ? membershipError.message : "Failed to load your access.");
@@ -8012,6 +9911,12 @@ export default function SmartClassLiveApp() {
     const timeout = window.setTimeout(() => setFlash(null), 4000);
     return () => window.clearTimeout(timeout);
   }, [flash]);
+
+  useEffect(() => {
+    const syncPath = () => setPathname(getInitialPath());
+    window.addEventListener("popstate", syncPath);
+    return () => window.removeEventListener("popstate", syncPath);
+  }, []);
 
   useEffect(() => {
     if (!hasSupabaseEnv) {
@@ -8055,6 +9960,7 @@ export default function SmartClassLiveApp() {
   }, [session?.user]);
 
   const selectedWorkspace = workspaceOverride ?? workspaces.find((item) => item.key === workspaceKey) ?? null;
+  const navItems = selectedWorkspace ? NAV_BY_ROLE[selectedWorkspace.role] : [];
 
   const refreshWorkspaceData = async () => {
     if (!selectedWorkspace || !session?.user) return;
@@ -8078,9 +9984,37 @@ export default function SmartClassLiveApp() {
     if (!workspaceOverride) {
       window.localStorage.setItem(`smart-class.workspace.${session.user.id}`, selectedWorkspace.key);
     }
-    setView("dashboard");
     void refreshWorkspaceData();
   }, [selectedWorkspace?.key, session?.user?.id, workspaceOverride]);
+
+  useEffect(() => {
+    if (bootLoading) {
+      return;
+    }
+
+    if (!session) {
+      if (!isPublicPath(pathname)) {
+        navigateTo("/login", true);
+      }
+      return;
+    }
+
+    if (!selectedWorkspace) {
+      return;
+    }
+
+    const requestedView = getViewFromPath(pathname);
+    const allowedView = navItems.find((item) => item.id === requestedView)?.id ?? DEFAULT_VIEW;
+
+    if (view !== allowedView) {
+      setView(allowedView);
+    }
+
+    const expectedPath = buildViewPath(allowedView);
+    if (normalizePath(pathname) !== expectedPath) {
+      navigateTo(expectedPath, true);
+    }
+  }, [bootLoading, navItems, pathname, selectedWorkspace, session, view]);
 
   const notify = (kind: "success" | "error" | "info", message: string) => {
     setFlash({ kind, message });
@@ -8092,6 +10026,7 @@ export default function SmartClassLiveApp() {
     setWorkspaces([]);
     setWorkspaceKey(null);
     setWorkspaceOverride(null);
+    navigateTo("/login", true);
   };
 
   const bootstrapInitialSuperAdmin = async () => {
@@ -8128,7 +10063,19 @@ export default function SmartClassLiveApp() {
   }
 
   if (!session) {
-    return <AuthScreen loading={membershipLoading || dataLoading} onNotify={notify} />;
+    if (pathname === "/") {
+      return <LandingPage onLogin={() => navigateTo("/login")} onSignup={() => navigateTo("/signup")} />;
+    }
+
+    return (
+      <AuthScreen
+        mode={getAuthModeFromPath(pathname)}
+        loading={membershipLoading || dataLoading}
+        onNotify={notify}
+        onModeChange={(mode) => navigateTo(mode === "signup" ? "/signup" : "/login")}
+        onBackHome={() => navigateTo("/")}
+      />
+    );
   }
 
   if (membershipLoading || !profile) {
@@ -8163,13 +10110,11 @@ export default function SmartClassLiveApp() {
     );
   }
 
-  const navItems = NAV_BY_ROLE[selectedWorkspace.role];
-
   return (
     <WorkspaceShell
       navItems={navItems}
       activeView={view}
-      onSelect={setView}
+      onSelect={(nextView) => navigateToView(nextView)}
       onRefresh={() => void refreshWorkspaceData()}
       onSignOut={() => void signOut()}
       onSwitchWorkspace={() => {
@@ -8203,7 +10148,7 @@ export default function SmartClassLiveApp() {
             data={data}
             onNotify={notify}
             onRefresh={refreshWorkspaceData}
-            onChangeView={setView}
+            onChangeView={(nextView) => navigateToView(nextView)}
             onOpenSchool={(school) =>
               setWorkspaceOverride({
                 key: `override-school-admin-${school.id}`,
@@ -8216,7 +10161,14 @@ export default function SmartClassLiveApp() {
           />
         ) : null}
         {data?.role === "school_admin" ? (
-          <SchoolAdminPortal view={view} data={data} profile={profile} onNotify={notify} onRefresh={refreshWorkspaceData} />
+          <SchoolAdminPortalModern
+            view={view}
+            data={data}
+            profile={profile}
+            onNotify={notify}
+            onRefresh={refreshWorkspaceData}
+            onChangeView={(nextView) => navigateToView(nextView)}
+          />
         ) : null}
         {data?.role === "teacher" ? (
           <TeacherPortal view={view} data={data} profile={profile} onNotify={notify} onRefresh={refreshWorkspaceData} />

@@ -58,6 +58,8 @@ create table subscription_plans (
   is_active     boolean not null default true,
   created_at    timestamptz not null default now()
 );
+create unique index uq_subscription_plans_name_normalized
+  on subscription_plans ((lower(btrim(name))));
 
 create table school_subscriptions (
   id            uuid primary key default gen_random_uuid(),
