@@ -7,7 +7,6 @@ create or replace function public.send_private_message(
   p_recipient_id uuid,
   p_subject text default null,
   p_body text default null
-)
 returns public.messages
 language plpgsql
 security definer

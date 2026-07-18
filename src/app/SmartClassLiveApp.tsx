@@ -30,6 +30,7 @@ import { hasSupabaseEnv, supabase, supabaseAnonKey, supabaseUrl } from "@/lib/su
 type UserRole = "super_admin" | "school_admin" | "teacher" | "student" | "parent";
 type AuthMode = "signin" | "signup";
 type SettingValueType = "text" | "number" | "boolean" | "list" | "pairs";
+type StudentAcademicStatus = "active" | "graduated" | "transferred" | "withdrawn" | "suspended";
 
 type BasicProfile = {
   id: string;
@@ -415,11 +416,28 @@ type AnnouncementBundle = {
   audience: string;
 };
 
+type SchoolAdminTeacherAssignment = {
+  id: string;
+  subject_id: string;
+  class_id: string | null;
+  subjectName: string;
+  className: string;
+  label: string;
+};
+
 type SchoolAdminTeacher = {
   userId: string;
   name: string;
   email: string | null;
   assignments: string[];
+  assignmentDetails: SchoolAdminTeacherAssignment[];
+};
+
+type SchoolAdminStudentParent = {
+  userId: string;
+  name: string;
+  email: string | null;
+  relationship: string;
 };
 
 type SchoolAdminStudent = {
@@ -427,8 +445,11 @@ type SchoolAdminStudent = {
   name: string;
   email: string | null;
   className: string;
+  classId: string | null;
+  enrollmentId: string | null;
   status: string;
   parents: string[];
+  parentDetails: SchoolAdminStudentParent[];
 };
 
 type StudentSummary = {
@@ -1402,28 +1423,50 @@ async function loadSchoolAdminData(schoolId: string, currentUserId: string) {
   const classMap = byId(classRows);
   const subjectRows = (unwrap(subjects) as unknown) as SubjectRecord[];
   const subjectMap = byId(subjectRows);
+  const assignmentRows = (unwrap(assignments) as unknown) as TeacherAssignment[];
+  const enrollmentRows = (unwrap(enrollments) as unknown) as ClassEnrollment[];
+  const parentLinkRows = (unwrap(parentLinks) as unknown) as ParentStudentLink[];
 
   const rolesByUser = roleData.reduce<Record<string, UserRole[]>>((acc, row) => {
     acc[row.user_id] = acc[row.user_id] ? [...acc[row.user_id], row.role] : [row.role];
     return acc;
   }, {});
 
-  const parentNamesByStudent = ((unwrap(parentLinks) as unknown) as ParentStudentLink[]).reduce<Record<string, string[]>>(
-    (acc, row) => {
-      const list = acc[row.student_id] ?? [];
-      const parentName = fullName(profileMap[row.parent_id]);
-      acc[row.student_id] = parentName ? [...list, parentName] : list;
-      return acc;
-    },
-    {},
-  );
+  const parentNamesByStudent = parentLinkRows.reduce<Record<string, string[]>>((acc, row) => {
+    const list = acc[row.student_id] ?? [];
+    const parentName = fullName(profileMap[row.parent_id]);
+    acc[row.student_id] = parentName ? [...list, parentName] : list;
+    return acc;
+  }, {});
 
-  const teacherAssignments = ((unwrap(assignments) as unknown) as TeacherAssignment[]).reduce<Record<string, string[]>>(
+  const parentDetailsByStudent = parentLinkRows.reduce<Record<string, SchoolAdminStudentParent[]>>((acc, row) => {
+    const parentProfile = profileMap[row.parent_id];
+    const list = acc[row.student_id] ?? [];
+    acc[row.student_id] = [
+      ...list,
+      {
+        userId: row.parent_id,
+        name: fullName(parentProfile),
+        email: parentProfile?.email ?? null,
+        relationship: row.relationship,
+      },
+    ];
+    return acc;
+  }, {});
+
+  const teacherAssignmentDetailsByTeacher = assignmentRows.reduce<Record<string, SchoolAdminTeacherAssignment[]>>(
     (acc, row) => {
       const subjectName = subjectMap[row.subject_id]?.name ?? "Unknown subject";
       const className = row.class_id ? classMap[row.class_id]?.name ?? "Unknown class" : "All classes";
-      const label = `${subjectName} · ${className}`;
-      acc[row.teacher_id] = acc[row.teacher_id] ? [...acc[row.teacher_id], label] : [label];
+      const assignmentDetail = {
+        id: row.id,
+        subject_id: row.subject_id,
+        class_id: row.class_id,
+        subjectName,
+        className,
+        label: `${subjectName} / ${className}`,
+      };
+      acc[row.teacher_id] = acc[row.teacher_id] ? [...acc[row.teacher_id], assignmentDetail] : [assignmentDetail];
       return acc;
     },
     {},
@@ -1434,22 +1477,24 @@ async function loadSchoolAdminData(schoolId: string, currentUserId: string) {
       userId: teacherId,
       name: fullName(profileMap[teacherId]),
       email: profileMap[teacherId]?.email ?? null,
-      assignments: teacherAssignments[teacherId] ?? [],
+      assignments: (teacherAssignmentDetailsByTeacher[teacherId] ?? []).map((assignment) => assignment.label),
+      assignmentDetails: teacherAssignmentDetailsByTeacher[teacherId] ?? [],
     }),
   );
 
   const students = unique(roleData.filter((row) => row.role === "student").map((row) => row.user_id)).map<SchoolAdminStudent>(
     (studentId) => {
-      const enrollment = ((unwrap(enrollments) as unknown) as ClassEnrollment[]).find(
-        (row) => row.student_id === studentId,
-      );
+      const enrollment = enrollmentRows.find((row) => row.student_id === studentId);
       return {
         userId: studentId,
         name: fullName(profileMap[studentId]),
         email: profileMap[studentId]?.email ?? null,
         className: enrollment ? classMap[enrollment.class_id]?.name ?? "Unknown class" : "Not enrolled",
+        classId: enrollment?.class_id ?? null,
+        enrollmentId: enrollment?.id ?? null,
         status: enrollment?.status ?? "inactive",
         parents: parentNamesByStudent[studentId] ?? [],
+        parentDetails: parentDetailsByStudent[studentId] ?? [],
       };
     },
   );
@@ -2468,6 +2513,71 @@ function EmptyState({ message }: { message: string }) {
   return (
     <div className="rounded-2xl border border-dashed border-border bg-muted/40 p-6 text-sm text-muted-foreground">
       {message}
+    </div>
+  );
+}
+
+function PopupModal({
+  open,
+  onClose,
+  title,
+  description,
+  children,
+  footer,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  description?: string;
+  children: ReactNode;
+  footer?: ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose, open]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-[2rem] border border-border bg-card shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
+          <div>
+            <h3 className="text-2xl font-bold text-foreground">{title}</h3>
+            {description ? <p className="mt-2 text-sm text-muted-foreground">{description}</p> : null}
+          </div>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+        <div className="max-h-[calc(90vh-88px)] overflow-y-auto px-6 py-6">
+          <div className="space-y-6">
+            {children}
+            {footer ? <div className="flex flex-wrap justify-end gap-3 border-t border-border pt-5">{footer}</div> : null}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -6372,6 +6482,27 @@ function SchoolAdminPortal({
     subject: "",
     body: "",
   });
+  const [activeTeacherId, setActiveTeacherId] = useState<string | null>(null);
+  const [activeStudentId, setActiveStudentId] = useState<string | null>(null);
+  const [activeAnnouncementId, setActiveAnnouncementId] = useState<string | null>(null);
+  const [teacherAssignmentForm, setTeacherAssignmentForm] = useState({
+    subject_id: data.subjects[0]?.id ?? "",
+    class_id: "",
+  });
+  const [studentEditForm, setStudentEditForm] = useState({
+    class_id: data.classes[0]?.id ?? "",
+    status: "active",
+  });
+  const [announcementEditForm, setAnnouncementEditForm] = useState({
+    title: "",
+    body: "",
+  });
+
+  const selectedTeacher = activeTeacherId ? data.teachers.find((teacher) => teacher.userId === activeTeacherId) ?? null : null;
+  const selectedStudent = activeStudentId ? data.students.find((student) => student.userId === activeStudentId) ?? null : null;
+  const selectedAnnouncement = activeAnnouncementId
+    ? data.announcements.find((announcement) => announcement.item.id === activeAnnouncementId) ?? null
+    : null;
 
   useEffect(() => {
     setDaySelection(data.workingDays.map((item) => item.day_of_week));
@@ -7269,6 +7400,30 @@ function SchoolAdminPortalModern({
     subject: "",
     body: "",
   });
+  const [activeTeacherId, setActiveTeacherId] = useState<string | null>(null);
+  const [activeStudentId, setActiveStudentId] = useState<string | null>(null);
+  const [activeAnnouncementId, setActiveAnnouncementId] = useState<string | null>(null);
+  const [teacherAssignmentForm, setTeacherAssignmentForm] = useState({
+    subject_id: data.subjects[0]?.id ?? "",
+    class_id: "",
+  });
+  const [studentEditForm, setStudentEditForm] = useState<{
+    class_id: string;
+    status: StudentAcademicStatus;
+  }>({
+    class_id: data.classes[0]?.id ?? "",
+    status: "active",
+  });
+  const [announcementEditForm, setAnnouncementEditForm] = useState({
+    title: "",
+    body: "",
+  });
+
+  const selectedTeacher = activeTeacherId ? data.teachers.find((teacher) => teacher.userId === activeTeacherId) ?? null : null;
+  const selectedStudent = activeStudentId ? data.students.find((student) => student.userId === activeStudentId) ?? null : null;
+  const selectedAnnouncement = activeAnnouncementId
+    ? data.announcements.find((announcement) => announcement.item.id === activeAnnouncementId) ?? null
+    : null;
 
   useEffect(() => {
     setDaySelection(data.workingDays.map((item) => item.day_of_week));
@@ -7578,6 +7733,104 @@ function SchoolAdminPortalModern({
     }, "Message sent.");
   };
 
+  const openTeacherPopup = (teacher: SchoolAdminTeacher) => {
+    setActiveTeacherId(teacher.userId);
+    setTeacherAssignmentForm({
+      subject_id: teacher.assignmentDetails[0]?.subject_id ?? data.subjects[0]?.id ?? "",
+      class_id: "",
+    });
+  };
+
+  const addTeacherAssignment = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedTeacher) return;
+    if (!teacherAssignmentForm.subject_id) {
+      onNotify("error", "Choose a subject before saving the assignment.");
+      return;
+    }
+
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("teacher_subject_assignments").insert({
+          school_id: data.school.id,
+          teacher_id: selectedTeacher.userId,
+          subject_id: teacherAssignmentForm.subject_id,
+          class_id: teacherAssignmentForm.class_id || null,
+        }),
+      );
+      setTeacherAssignmentForm((prev) => ({ ...prev, class_id: "" }));
+    }, "Teacher assignment saved.");
+  };
+
+  const removeTeacherAssignment = (assignmentId: string) => {
+    void runAction(async () => {
+      unwrap(await supabase.from("teacher_subject_assignments").delete().eq("id", assignmentId));
+    }, "Teacher assignment removed.");
+  };
+
+  const openStudentPopup = (student: SchoolAdminStudent) => {
+    setActiveStudentId(student.userId);
+    setStudentEditForm({
+      class_id: student.classId ?? data.classes[0]?.id ?? "",
+      status: student.status,
+    });
+  };
+
+  const saveStudentPopup = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedStudent) return;
+    if (!studentEditForm.class_id) {
+      onNotify("error", "Choose a class before saving this student.");
+      return;
+    }
+
+    void runAction(async () => {
+      const enrollmentPayload = {
+        school_id: data.school.id,
+        class_id: studentEditForm.class_id,
+        student_id: selectedStudent.userId,
+        status: studentEditForm.status as StudentAcademicStatus,
+        status_changed_at: new Date().toISOString(),
+      };
+
+      if (selectedStudent.enrollmentId) {
+        unwrap(
+          await supabase.from("class_enrollments").update(enrollmentPayload).eq("id", selectedStudent.enrollmentId),
+        );
+      } else {
+        unwrap(await supabase.from("class_enrollments").insert(enrollmentPayload));
+      }
+
+      setActiveStudentId(null);
+    }, "Student details updated.");
+  };
+
+  const openAnnouncementPopup = (announcement: AnnouncementBundle) => {
+    setActiveAnnouncementId(announcement.item.id);
+    setAnnouncementEditForm({
+      title: announcement.item.title,
+      body: announcement.item.body,
+    });
+  };
+
+  const saveAnnouncementPopup = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedAnnouncement) return;
+
+    void runAction(async () => {
+      unwrap(
+        await supabase
+          .from("announcements")
+          .update({
+            title: announcementEditForm.title,
+            body: announcementEditForm.body,
+          })
+          .eq("id", selectedAnnouncement.item.id),
+      );
+      setActiveAnnouncementId(null);
+    }, "Announcement updated.");
+  };
+
   const filteredTeachers = data.teachers.filter((teacher) => {
     const haystack = [teacher.name, teacher.email ?? "", teacher.assignments.join(" ")].join(" ").toLowerCase();
     return haystack.includes(teacherQuery.trim().toLowerCase());
@@ -7655,6 +7908,77 @@ function SchoolAdminPortalModern({
       view: "timetable",
     },
   ] as const;
+
+  const announcementPopup = selectedAnnouncement ? (
+    <PopupModal
+      open={!!selectedAnnouncement}
+      onClose={() => setActiveAnnouncementId(null)}
+      title={selectedAnnouncement.item.title}
+      description="Open the announcement in a larger workspace, review the audience, and update the message copy."
+    >
+      <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+        <div className="space-y-4">
+          <div className="rounded-[1.7rem] bg-muted/30 p-5">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge>{selectedAnnouncement.audience}</Badge>
+              <Badge tone={selectedAnnouncement.item.is_published ? "success" : "warning"}>
+                {selectedAnnouncement.item.is_published ? "Published" : "Draft"}
+              </Badge>
+            </div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl bg-card px-4 py-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Author</p>
+                <p className="mt-2 text-base font-bold text-foreground">{selectedAnnouncement.authorName}</p>
+              </div>
+              <div className="rounded-2xl bg-card px-4 py-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Published</p>
+                <p className="mt-2 text-base font-bold text-foreground">
+                  {formatDateTime(selectedAnnouncement.item.published_at || selectedAnnouncement.item.created_at)}
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="rounded-[1.7rem] bg-muted/20 p-5">
+            <h4 className="text-lg font-bold text-foreground">Audience</h4>
+            <p className="mt-2 text-sm text-muted-foreground">
+              The target is shown here for context. This popup focuses on the announcement content itself.
+            </p>
+            <div className="mt-4 rounded-2xl bg-card px-4 py-4">
+              <p className="font-semibold text-foreground">{selectedAnnouncement.audience}</p>
+            </div>
+          </div>
+        </div>
+
+        <Panel title="Edit Announcement" description="Adjust the title or body and save from this popup.">
+          <form className="grid gap-4" onSubmit={saveAnnouncementPopup}>
+            <Field label="Title">
+              <Input
+                value={announcementEditForm.title}
+                onChange={(event) => setAnnouncementEditForm((prev) => ({ ...prev, title: event.target.value }))}
+                required
+              />
+            </Field>
+            <Field label="Body">
+              <TextArea
+                rows={8}
+                value={announcementEditForm.body}
+                onChange={(event) => setAnnouncementEditForm((prev) => ({ ...prev, body: event.target.value }))}
+                required
+              />
+            </Field>
+            <div className="flex flex-wrap justify-end gap-3">
+              <Button type="button" variant="ghost" onClick={() => setActiveAnnouncementId(null)}>
+                Close
+              </Button>
+              <Button type="submit" disabled={busy}>
+                Save Announcement
+              </Button>
+            </div>
+          </form>
+        </Panel>
+      </div>
+    </PopupModal>
+  ) : null;
 
   if (view === "settings") {
     return (
@@ -8053,14 +8377,15 @@ function SchoolAdminPortalModern({
             <EmptyState message="No teachers match this search yet." />
           ) : (
             <div className="overflow-hidden rounded-2xl border border-border">
-              <div className="hidden grid-cols-[1.4fr_1.1fr_0.9fr] gap-4 border-b border-border bg-muted/20 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground lg:grid">
+              <div className="hidden grid-cols-[1.4fr_1.1fr_0.7fr_0.7fr] gap-4 border-b border-border bg-muted/20 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground lg:grid">
                 <p>Teacher</p>
                 <p>Assignments</p>
                 <p>Status</p>
+                <p>Open</p>
               </div>
               <div className="divide-y divide-border">
                 {filteredTeachers.map((teacher) => (
-                  <div key={teacher.userId} className="grid gap-4 px-5 py-4 lg:grid-cols-[1.4fr_1.1fr_0.9fr] lg:items-center">
+                  <div key={teacher.userId} className="grid gap-4 px-5 py-4 lg:grid-cols-[1.4fr_1.1fr_0.7fr_0.7fr] lg:items-center">
                     <div className="flex items-center gap-3">
                       <div className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold ${avatarTone(teacher.userId)}`}>
                         {initialsFor(teacher.name)}
@@ -8076,12 +8401,115 @@ function SchoolAdminPortalModern({
                     <div>
                       <Badge tone="success">Active</Badge>
                     </div>
+                    <div>
+                      <Button type="button" variant="secondary" onClick={() => openTeacherPopup(teacher)}>
+                        Open
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
           )}
         </Panel>
+        {selectedTeacher ? (
+          <PopupModal
+            open={!!selectedTeacher}
+            onClose={() => setActiveTeacherId(null)}
+            title={selectedTeacher.name}
+            description="View this teacher and update teaching assignments without leaving the dashboard."
+          >
+            <div className="grid gap-6 xl:grid-cols-[0.92fr_1.08fr]">
+              <div className="rounded-[1.7rem] bg-muted/30 p-5">
+                <div className="flex items-center gap-4">
+                  <div className={`flex h-14 w-14 items-center justify-center rounded-full text-base font-bold ${avatarTone(selectedTeacher.userId)}`}>
+                    {initialsFor(selectedTeacher.name)}
+                  </div>
+                  <div>
+                    <p className="text-xl font-bold text-foreground">{selectedTeacher.name}</p>
+                    <p className="text-sm text-muted-foreground">{selectedTeacher.email || "No email added yet"}</p>
+                  </div>
+                </div>
+                <div className="mt-5 grid gap-3">
+                  <div className="rounded-2xl bg-card px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Assignments</p>
+                    <p className="mt-2 text-lg font-bold text-foreground">{selectedTeacher.assignmentDetails.length}</p>
+                  </div>
+                  <div className="rounded-2xl bg-card px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Profile editing</p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Name and email stay view-only here so school admins do not overwrite a teacher&apos;s own profile.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-[1.7rem] bg-muted/20 p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-lg font-bold text-foreground">Current assignments</h4>
+                    <p className="mt-1 text-sm text-muted-foreground">Remove or review one assignment at a time.</p>
+                  </div>
+                  <Badge>{selectedTeacher.assignmentDetails.length} items</Badge>
+                </div>
+                {selectedTeacher.assignmentDetails.length === 0 ? (
+                  <div className="mt-4">
+                    <EmptyState message="This teacher does not have any assignments yet." />
+                  </div>
+                ) : (
+                  <div className="mt-4 space-y-3">
+                    {selectedTeacher.assignmentDetails.map((assignment) => (
+                      <div key={assignment.id} className="flex flex-col gap-3 rounded-2xl bg-card px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="font-semibold text-foreground">{assignment.subjectName}</p>
+                          <p className="text-sm text-muted-foreground">{assignment.className}</p>
+                        </div>
+                        <Button type="button" variant="danger" onClick={() => removeTeacherAssignment(assignment.id)} disabled={busy}>
+                          Remove
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <Panel title="Add Assignment" description="Attach another subject or class from this popup.">
+              <form className="grid gap-4 lg:grid-cols-3" onSubmit={addTeacherAssignment}>
+                <Field label="Subject">
+                  <Select
+                    value={teacherAssignmentForm.subject_id}
+                    onChange={(event) => setTeacherAssignmentForm((prev) => ({ ...prev, subject_id: event.target.value }))}
+                  >
+                    {data.subjects.map((subject) => (
+                      <option key={subject.id} value={subject.id}>
+                        {subject.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="Class">
+                  <Select
+                    value={teacherAssignmentForm.class_id}
+                    onChange={(event) => setTeacherAssignmentForm((prev) => ({ ...prev, class_id: event.target.value }))}
+                  >
+                    <option value="">All classes</option>
+                    {data.classes.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <div className="flex items-end">
+                  <Button type="submit" disabled={busy || !data.subjects.length} className="w-full">
+                    Save Assignment
+                  </Button>
+                </div>
+              </form>
+            </Panel>
+          </PopupModal>
+        ) : null}
       </div>
     );
   }
@@ -8158,15 +8586,16 @@ function SchoolAdminPortalModern({
             <EmptyState message="No students match this search yet." />
           ) : (
             <div className="overflow-hidden rounded-2xl border border-border">
-              <div className="hidden grid-cols-[1.45fr_0.8fr_1fr_0.75fr] gap-4 border-b border-border bg-muted/20 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground lg:grid">
+              <div className="hidden grid-cols-[1.35fr_0.75fr_0.95fr_0.7fr_0.7fr] gap-4 border-b border-border bg-muted/20 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground lg:grid">
                 <p>Student</p>
                 <p>Class</p>
                 <p>Parent</p>
                 <p>Status</p>
+                <p>Open</p>
               </div>
               <div className="divide-y divide-border">
                 {filteredStudents.map((student) => (
-                  <div key={student.userId} className="grid gap-4 px-5 py-4 lg:grid-cols-[1.45fr_0.8fr_1fr_0.75fr] lg:items-center">
+                  <div key={student.userId} className="grid gap-4 px-5 py-4 lg:grid-cols-[1.35fr_0.75fr_0.95fr_0.7fr_0.7fr] lg:items-center">
                     <div className="flex items-center gap-3">
                       <div className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold ${avatarTone(student.userId)}`}>
                         {initialsFor(student.name)}
@@ -8183,12 +8612,115 @@ function SchoolAdminPortalModern({
                     <div>
                       <Badge tone={student.status === "active" ? "success" : "warning"}>{titleCaseLabel(student.status)}</Badge>
                     </div>
+                    <div>
+                      <Button type="button" variant="secondary" onClick={() => openStudentPopup(student)}>
+                        Open
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
           )}
         </Panel>
+        {selectedStudent ? (
+          <PopupModal
+            open={!!selectedStudent}
+            onClose={() => setActiveStudentId(null)}
+            title={selectedStudent.name}
+            description="Open a fuller student view, confirm parent links, and update enrollment without leaving the list."
+          >
+            <div className="grid gap-6 xl:grid-cols-[0.92fr_1.08fr]">
+              <div className="space-y-4">
+                <div className="rounded-[1.7rem] bg-muted/30 p-5">
+                  <div className="flex items-center gap-4">
+                    <div className={`flex h-14 w-14 items-center justify-center rounded-full text-base font-bold ${avatarTone(selectedStudent.userId)}`}>
+                      {initialsFor(selectedStudent.name)}
+                    </div>
+                    <div>
+                      <p className="text-xl font-bold text-foreground">{selectedStudent.name}</p>
+                      <p className="text-sm text-muted-foreground">{selectedStudent.email || "No email added yet"}</p>
+                    </div>
+                  </div>
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-2xl bg-card px-4 py-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Current class</p>
+                      <p className="mt-2 text-base font-bold text-foreground">{selectedStudent.className}</p>
+                    </div>
+                    <div className="rounded-2xl bg-card px-4 py-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Academic status</p>
+                      <p className="mt-2 text-base font-bold text-foreground">{titleCaseLabel(selectedStudent.status)}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-[1.7rem] bg-muted/20 p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-lg font-bold text-foreground">Parent contacts</h4>
+                      <p className="mt-1 text-sm text-muted-foreground">Review linked contacts before reaching out.</p>
+                    </div>
+                    <Badge>{selectedStudent.parentDetails.length} linked</Badge>
+                  </div>
+                  {selectedStudent.parentDetails.length === 0 ? (
+                    <div className="mt-4">
+                      <EmptyState message="No parent has been linked to this student yet." />
+                    </div>
+                  ) : (
+                    <div className="mt-4 space-y-3">
+                      {selectedStudent.parentDetails.map((parent) => (
+                        <div key={`${parent.userId}-${parent.relationship}`} className="rounded-2xl bg-card px-4 py-4">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-semibold text-foreground">{parent.name}</p>
+                            <Badge>{titleCaseLabel(parent.relationship)}</Badge>
+                          </div>
+                          <p className="mt-1 text-sm text-muted-foreground">{parent.email || "No email added yet"}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <Panel title="Update Enrollment" description="Move the student, change their academic status, then save from here.">
+                <form className="grid gap-4" onSubmit={saveStudentPopup}>
+                  <Field label="Class">
+                    <Select
+                      value={studentEditForm.class_id}
+                      onChange={(event) => setStudentEditForm((prev) => ({ ...prev, class_id: event.target.value }))}
+                    >
+                      {data.classes.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label="Academic status">
+                    <Select
+                      value={studentEditForm.status}
+                      onChange={(event) => setStudentEditForm((prev) => ({ ...prev, status: event.target.value }))}
+                    >
+                      <option value="active">Active</option>
+                      <option value="graduated">Graduated</option>
+                      <option value="transferred">Transferred</option>
+                      <option value="withdrawn">Withdrawn</option>
+                      <option value="suspended">Suspended</option>
+                    </Select>
+                  </Field>
+                  <div className="flex flex-wrap justify-end gap-3">
+                    <Button type="button" variant="ghost" onClick={() => setActiveStudentId(null)}>
+                      Close
+                    </Button>
+                    <Button type="submit" disabled={busy || !studentEditForm.class_id}>
+                      Save Student
+                    </Button>
+                  </div>
+                </form>
+              </Panel>
+            </div>
+          </PopupModal>
+        ) : null}
       </div>
     );
   }
@@ -8490,19 +9022,28 @@ function SchoolAdminPortalModern({
               <EmptyState message="No announcements match this search yet." />
             ) : (
               filteredAnnouncements.map((announcement) => (
-                <div key={announcement.item.id} className="rounded-[1.6rem] border border-border bg-card px-5 py-5 shadow-sm">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge>{announcement.audience}</Badge>
-                    <p className="text-sm text-muted-foreground">{formatDate(announcement.item.published_at || announcement.item.created_at)}</p>
+                <button
+                  key={announcement.item.id}
+                  type="button"
+                  onClick={() => openAnnouncementPopup(announcement)}
+                  className="block w-full rounded-[1.6rem] border border-border bg-card px-5 py-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge>{announcement.audience}</Badge>
+                      <p className="text-sm text-muted-foreground">{formatDate(announcement.item.published_at || announcement.item.created_at)}</p>
+                    </div>
+                    <span className="text-sm font-semibold text-primary">Open</span>
                   </div>
                   <p className="mt-3 text-xl font-bold text-foreground">{announcement.item.title}</p>
                   <p className="mt-2 text-sm leading-6 text-muted-foreground">{announcement.item.body}</p>
                   <p className="mt-3 text-xs text-muted-foreground">By {announcement.authorName}</p>
-                </div>
+                </button>
               ))
             )}
           </div>
         </Panel>
+        {announcementPopup}
       </div>
     );
   }
@@ -8580,19 +9121,25 @@ function SchoolAdminPortalModern({
               <EmptyState message="No announcements have been published yet." />
             ) : (
               data.announcements.slice(0, 4).map((announcement) => (
-                <div key={announcement.item.id} className="rounded-2xl bg-secondary/35 px-4 py-4">
+                <button
+                  key={announcement.item.id}
+                  type="button"
+                  onClick={() => openAnnouncementPopup(announcement)}
+                  className="block w-full rounded-2xl bg-secondary/35 px-4 py-4 text-left transition hover:bg-secondary/55"
+                >
                   <div className="flex items-center gap-2">
                     <Badge>{announcement.audience}</Badge>
                     <p className="text-xs text-muted-foreground">{formatDate(announcement.item.published_at || announcement.item.created_at)}</p>
                   </div>
                   <p className="mt-3 font-semibold text-foreground">{announcement.item.title}</p>
                   <p className="mt-1 text-sm text-muted-foreground">{announcement.item.body}</p>
-                </div>
+                </button>
               ))
             )}
           </div>
         </Panel>
       </div>
+      {announcementPopup}
       <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <Panel title="School Snapshot" description="Plan, status, timezone, and recent activity in one place.">
           <div className="grid gap-3 sm:grid-cols-2">
