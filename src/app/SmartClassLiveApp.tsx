@@ -554,12 +554,10 @@ const ROLE_LABELS: Record<UserRole, string> = {
 
 const NAV_BY_ROLE: Record<UserRole, NavItem[]> = {
   super_admin: [
-    { id: "dashboard", label: "Overview", icon: <Shield className="w-4 h-4" /> },
+    { id: "dashboard", label: "Dashboard", icon: <Home className="w-4 h-4" /> },
     { id: "schools", label: "Schools", icon: <GraduationCap className="w-4 h-4" /> },
-    { id: "people", label: "People", icon: <Users className="w-4 h-4" /> },
-    { id: "access", label: "Access", icon: <UserPlus className="w-4 h-4" /> },
-    { id: "billing", label: "Plans", icon: <Layers className="w-4 h-4" /> },
-    { id: "audit", label: "Audit", icon: <ClipboardList className="w-4 h-4" /> },
+    { id: "analytics", label: "Analytics", icon: <ClipboardList className="w-4 h-4" /> },
+    { id: "subscriptions", label: "Subscriptions", icon: <Layers className="w-4 h-4" /> },
     { id: "settings", label: "Settings", icon: <Settings className="w-4 h-4" /> },
   ],
   school_admin: [
@@ -2253,16 +2251,57 @@ function StatCard({
   label,
   value,
   sub,
+  onClick,
+  className = "",
 }: {
   label: string;
   value: string | number;
   sub?: string;
+  onClick?: () => void;
+  className?: string;
 }) {
-  return (
-    <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+  const content = (
+    <div
+      className={`rounded-2xl border border-border bg-card p-4 shadow-sm transition ${
+        onClick ? "hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md" : ""
+      } ${className}`}
+    >
       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className="mt-2 text-2xl font-bold text-foreground">{value}</p>
       {sub ? <p className="mt-1 text-sm text-muted-foreground">{sub}</p> : null}
+    </div>
+  );
+
+  if (!onClick) {
+    return content;
+  }
+
+  return (
+    <button type="button" onClick={onClick} className="w-full text-left">
+      {content}
+    </button>
+  );
+}
+
+function SectionTrail({
+  items,
+  description,
+  action,
+}: {
+  items: string[];
+  description?: string;
+  action?: ReactNode;
+}) {
+  const title = items[items.length - 1] ?? "";
+
+  return (
+    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">{items.join(" / ")}</p>
+        <h3 className="mt-2 text-3xl font-bold text-foreground">{title}</h3>
+        {description ? <p className="mt-2 max-w-3xl text-sm text-muted-foreground">{description}</p> : null}
+      </div>
+      {action ? <div className="flex flex-wrap gap-2">{action}</div> : null}
     </div>
   );
 }
@@ -2753,12 +2792,14 @@ function SuperAdminPortal({
   onNotify,
   onRefresh,
   onOpenSchool,
+  onChangeView,
 }: {
   view: string;
   data: SuperAdminData;
   onNotify: (kind: "success" | "error" | "info", message: string) => void;
   onRefresh: () => Promise<void>;
   onOpenSchool: (school: SchoolRecord) => void;
+  onChangeView: (view: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [schoolForm, setSchoolForm] = useState({
@@ -2795,6 +2836,28 @@ function SuperAdminPortal({
   const [accessQuery, setAccessQuery] = useState("");
   const [auditQuery, setAuditQuery] = useState("");
   const [subscriptionDrafts, setSubscriptionDrafts] = useState<Record<string, { plan_id: string; status: string; ends_at: string }>>({});
+  const [schoolQuery, setSchoolQuery] = useState("");
+  const [selectedSchoolId, setSelectedSchoolId] = useState<string | null>(null);
+  const [schoolSection, setSchoolSection] = useState<"overview" | "teachers" | "students" | "parents" | "admins" | "activity">("overview");
+  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [selectedSettingKey, setSelectedSettingKey] = useState<string | null>(null);
+  const [settingsQuery, setSettingsQuery] = useState("");
+  const [dashboardFocus, setDashboardFocus] = useState<"overview" | "people" | "access" | "audit">("overview");
+  const [dashboardRoleFilter, setDashboardRoleFilter] = useState<"all" | UserRole>("all");
+
+  const topLevelView = view === "billing"
+    ? "subscriptions"
+    : view === "people" || view === "access" || view === "audit"
+      ? "dashboard"
+      : view;
+  const dashboardMode = view === "people"
+    ? "people"
+    : view === "access"
+      ? "access"
+      : view === "audit"
+        ? "audit"
+        : dashboardFocus;
 
   const totalStudents = data.stats.reduce((sum, item) => sum + Number(item.student_count || 0), 0);
   const totalTeachers = data.stats.reduce((sum, item) => sum + Number(item.teacher_count || 0), 0);
@@ -2912,6 +2975,204 @@ function SuperAdminPortal({
     const haystack = [row.action, row.entity_type, fullName(actor), actor?.email ?? "", schoolLabel].join(" ").toLowerCase();
     return haystack.includes(query);
   });
+
+  const allSchoolDirectory = data.stats
+    .map((row) => {
+      const school = schoolMap[row.school_id] ?? {
+        id: row.school_id,
+        name: row.school_name,
+        slug: "",
+        timezone: "UTC",
+        is_active: row.is_active,
+        created_at: null,
+      };
+      const subscription = latestSubscriptionsBySchool[row.school_id] ?? null;
+      const plan = subscription ? planMap[subscription.plan_id] ?? null : null;
+      return {
+        ...row,
+        school,
+        subscription,
+        plan,
+      };
+    })
+    .sort((a, b) => a.school_name.localeCompare(b.school_name));
+
+  const schoolDirectory = allSchoolDirectory.filter((row) => {
+    const query = schoolQuery.trim().toLowerCase();
+    if (!query) return true;
+    const haystack = [
+      row.school_name,
+      row.school.slug,
+      row.plan?.name ?? "",
+      row.subscription_status ?? "",
+      row.school.timezone,
+    ]
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(query);
+  });
+
+  const selectedSchoolSummary = selectedSchoolId
+    ? allSchoolDirectory.find((row) => row.school_id === selectedSchoolId) ?? null
+    : null;
+
+  const schoolMemberDirectory = (schoolId: string, roles: UserRole[]) =>
+    unique(
+      data.roleRows
+        .filter((row) => row.school_id === schoolId && row.is_active && roles.includes(row.role))
+        .map((row) => row.user_id),
+    )
+      .map((userId) => {
+        const rows = data.roleRows
+          .filter((row) => row.user_id === userId && row.school_id === schoolId && row.is_active)
+          .sort((a, b) => roleRank(a.role) - roleRank(b.role));
+        return {
+          userId,
+          profile: profileMap[userId],
+          rows,
+          joinedAt: rows[0]?.created_at ?? null,
+        };
+      })
+      .sort((a, b) => fullName(a.profile).localeCompare(fullName(b.profile)));
+
+  const selectedSchoolMembers = selectedSchoolId
+    ? {
+        teachers: schoolMemberDirectory(selectedSchoolId, ["teacher"]),
+        students: schoolMemberDirectory(selectedSchoolId, ["student"]),
+        parents: schoolMemberDirectory(selectedSchoolId, ["parent"]),
+        admins: schoolMemberDirectory(selectedSchoolId, ["school_admin"]),
+      }
+    : { teachers: [], students: [], parents: [], admins: [] };
+
+  const currentSchoolMemberList =
+    schoolSection === "teachers"
+      ? selectedSchoolMembers.teachers
+      : schoolSection === "students"
+        ? selectedSchoolMembers.students
+        : schoolSection === "parents"
+          ? selectedSchoolMembers.parents
+          : schoolSection === "admins"
+            ? selectedSchoolMembers.admins
+            : [];
+
+  const selectedMemberDetail = selectedMemberId
+    ? [
+        ...selectedSchoolMembers.teachers,
+        ...selectedSchoolMembers.students,
+        ...selectedSchoolMembers.parents,
+        ...selectedSchoolMembers.admins,
+      ].find((row) => row.userId === selectedMemberId) ?? null
+    : null;
+
+  const selectedMemberRoles = selectedMemberId
+    ? ((roleRowsByUser[selectedMemberId] ?? []).sort((a, b) => roleRank(a.role) - roleRank(b.role)))
+    : [];
+
+  const settingsDirectory = data.settings
+    .filter((setting) => {
+      const query = settingsQuery.trim().toLowerCase();
+      if (!query) return true;
+      const haystack = `${setting.key} ${formatInlineValue(setting.value)}`.toLowerCase();
+      return haystack.includes(query);
+    })
+    .sort((a, b) => a.key.localeCompare(b.key));
+
+  const selectedSetting = selectedSettingKey
+    ? data.settings.find((setting) => setting.key === selectedSettingKey) ?? null
+    : null;
+
+  const planUsage = data.plans
+    .map((plan) => {
+      const schoolsOnPlan = currentSubscriptions.filter((subscription) => subscription.plan_id === plan.id);
+      const revenueCents = schoolsOnPlan
+        .filter((subscription) => subscription.status !== "canceled" && subscription.status !== "suspended")
+        .length * plan.price_cents;
+      return {
+        plan,
+        schoolsOnPlan,
+        schoolCount: schoolsOnPlan.length,
+        revenueCents,
+      };
+    })
+    .sort((a, b) => b.schoolCount - a.schoolCount || a.plan.price_cents - b.plan.price_cents);
+
+  const selectedPlanUsage = selectedPlanId
+    ? planUsage.find((entry) => entry.plan.id === selectedPlanId) ?? null
+    : null;
+
+  const estimatedMonthlyRevenue = currentSubscriptions.reduce((sum, subscription) => {
+    if (subscription.status === "canceled" || subscription.status === "suspended") return sum;
+    return sum + (planMap[subscription.plan_id]?.price_cents ?? 0);
+  }, 0);
+
+  const recentMonthLabels = Array.from({ length: 6 }, (_, index) => {
+    const cursor = new Date();
+    cursor.setDate(1);
+    cursor.setMonth(cursor.getMonth() - (5 - index));
+    return {
+      key: `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`,
+      label: cursor.toLocaleDateString(undefined, { month: "short" }),
+    };
+  });
+
+  const schoolGrowth = recentMonthLabels.map((month) => ({
+    ...month,
+    count: data.schools.filter((school) => {
+      if (!school.created_at) return false;
+      const created = new Date(school.created_at);
+      if (Number.isNaN(created.getTime())) return false;
+      const createdKey = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}`;
+      return createdKey === month.key;
+    }).length,
+  }));
+
+  const growthMax = Math.max(...schoolGrowth.map((item) => item.count), 1);
+  const planUsageMax = Math.max(...planUsage.map((item) => item.schoolCount), 1);
+
+  const openDashboardFocus = (focus: "overview" | "people" | "access" | "audit", roleFilter: "all" | UserRole = "all") => {
+    setDashboardFocus(focus);
+    setDashboardRoleFilter(roleFilter);
+    onChangeView("dashboard");
+  };
+
+  const openSchoolDetail = (
+    schoolId: string,
+    nextSection: "overview" | "teachers" | "students" | "parents" | "admins" | "activity" = "overview",
+  ) => {
+    setSelectedSchoolId(schoolId);
+    setSchoolSection(nextSection);
+    setSelectedMemberId(null);
+    onChangeView("schools");
+  };
+
+  const openSchoolMember = (
+    schoolId: string,
+    nextSection: "teachers" | "students" | "parents" | "admins",
+    userId: string,
+  ) => {
+    setSelectedSchoolId(schoolId);
+    setSchoolSection(nextSection);
+    setSelectedMemberId(userId);
+    onChangeView("schools");
+  };
+
+  const schoolSectionLabels = {
+    overview: "Overview",
+    teachers: "Teachers",
+    students: "Students",
+    parents: "Parents",
+    admins: "School Admins",
+    activity: "Activity",
+  } satisfies Record<"overview" | "teachers" | "students" | "parents" | "admins" | "activity", string>;
+
+  const dashboardPeopleRows = peopleRows.filter(({ roles }) => {
+    if (dashboardRoleFilter === "all") return true;
+    return roles.some((row) => row.role === dashboardRoleFilter);
+  });
+
+  const selectedSchoolAuditLogs = selectedSchoolId
+    ? data.auditLogs.filter((row) => row.school_id === selectedSchoolId).slice(0, 12)
+    : [];
 
   const resetPlanForm = () => {
     setPlanForm({
@@ -3206,6 +3467,1257 @@ function SuperAdminPortal({
       setBusy(false);
     }
   };
+
+  if (topLevelView === "dashboard") {
+    if (dashboardMode === "people") {
+      return (
+        <div className="space-y-6">
+          <SectionTrail
+            items={["Dashboard", "People"]}
+            description="Browse people across the platform, then narrow the list to teachers, students, parents, or super admins without leaving the dashboard."
+            action={
+              <Button type="button" variant="secondary" onClick={() => setDashboardFocus("overview")}>
+                Back to dashboard
+              </Button>
+            }
+          />
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              label="Everyone"
+              value={peopleRows.length}
+              sub="All visible profiles"
+              onClick={() => setDashboardRoleFilter("all")}
+              className={dashboardRoleFilter === "all" ? "border-primary/40 ring-2 ring-primary/10" : ""}
+            />
+            <StatCard
+              label="Teachers"
+              value={data.roleRows.filter((row) => row.role === "teacher" && row.is_active).length}
+              sub="Teaching accounts"
+              onClick={() => setDashboardRoleFilter("teacher")}
+              className={dashboardRoleFilter === "teacher" ? "border-primary/40 ring-2 ring-primary/10" : ""}
+            />
+            <StatCard
+              label="Students"
+              value={data.roleRows.filter((row) => row.role === "student" && row.is_active).length}
+              sub="Student accounts"
+              onClick={() => setDashboardRoleFilter("student")}
+              className={dashboardRoleFilter === "student" ? "border-primary/40 ring-2 ring-primary/10" : ""}
+            />
+            <StatCard
+              label="Parents"
+              value={data.roleRows.filter((row) => row.role === "parent" && row.is_active).length}
+              sub="Parent accounts"
+              onClick={() => setDashboardRoleFilter("parent")}
+              className={dashboardRoleFilter === "parent" ? "border-primary/40 ring-2 ring-primary/10" : ""}
+            />
+          </div>
+
+          <Panel title="Platform Directory" description="Use search and the cards above to focus on the people you need.">
+            <div className="mb-4 max-w-md">
+              <Field label="Search people">
+                <Input
+                  value={peopleQuery}
+                  onChange={(event) => setPeopleQuery(event.target.value)}
+                  placeholder="Search by name, email, school, or role"
+                />
+              </Field>
+            </div>
+
+            <div className="space-y-3">
+              {dashboardPeopleRows.length === 0 ? (
+                <EmptyState message="No matching profiles found." />
+              ) : (
+                dashboardPeopleRows.map(({ profile, roles }) => (
+                  <div key={profile.id} className="rounded-2xl border border-border bg-muted/30 p-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-lg font-bold">{fullName(profile)}</h3>
+                          <Badge tone={profile.is_active ? "success" : "warning"}>
+                            {profile.is_active ? "Active profile" : "Inactive profile"}
+                          </Badge>
+                          {roles.length === 0 ? <Badge tone="warning">No role yet</Badge> : null}
+                        </div>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          {profile.email ?? "No email on file"} / Joined {formatDate(profile.created_at)}
+                        </p>
+                      </div>
+                      <Button type="button" variant="secondary" onClick={() => openDashboardFocus("access")}>
+                        Manage access
+                      </Button>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {roles.map((row) => (
+                        <Badge key={row.id} tone={row.is_active ? "default" : "warning"}>
+                          {ROLE_LABELS[row.role]} / {row.school_id ? schoolMap[row.school_id]?.name ?? "Unknown school" : "Platform"}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </Panel>
+        </div>
+      );
+    }
+
+    if (dashboardMode === "access") {
+      return (
+        <div className="space-y-6">
+          <SectionTrail
+            items={["Dashboard", "Access"]}
+            description="Grant, restore, or pause platform access without crowding the main navigation."
+            action={
+              <Button type="button" variant="secondary" onClick={() => setDashboardFocus("overview")}>
+                Back to dashboard
+              </Button>
+            }
+          />
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard label="Role Rows" value={data.counts.role_assignments.toLocaleString()} />
+            <StatCard label="School Admins" value={data.roleRows.filter((row) => row.role === "school_admin" && row.is_active).length} />
+            <StatCard label="Teachers" value={data.roleRows.filter((row) => row.role === "teacher" && row.is_active).length} />
+            <StatCard label="Students" value={data.roleRows.filter((row) => row.role === "student" && row.is_active).length} />
+          </div>
+
+          <Panel title="Give or Restore Access" description="Choose a person, choose a role, and decide where that role should work.">
+            <form className="grid gap-4 lg:grid-cols-[1.3fr_0.8fr_1fr_auto]" onSubmit={saveRoleAssignment}>
+              <Field label="User">
+                <Select
+                  value={roleForm.user_id}
+                  onChange={(event) => setRoleForm((prev) => ({ ...prev, user_id: event.target.value }))}
+                  required
+                >
+                  {data.profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {fullName(profile)} / {profile.email ?? "No email"}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Role">
+                <Select
+                  value={roleForm.role}
+                  onChange={(event) => setRoleForm((prev) => ({ ...prev, role: event.target.value as UserRole }))}
+                >
+                  <option value="super_admin">Super Admin</option>
+                  <option value="school_admin">School Admin</option>
+                  <option value="teacher">Teacher</option>
+                  <option value="student">Student</option>
+                  <option value="parent">Parent</option>
+                </Select>
+              </Field>
+              <Field label="School">
+                <Select
+                  value={roleForm.school_id}
+                  onChange={(event) => setRoleForm((prev) => ({ ...prev, school_id: event.target.value }))}
+                  disabled={roleForm.role === "super_admin"}
+                  required={roleForm.role !== "super_admin"}
+                >
+                  {data.schools.map((school) => (
+                    <option key={school.id} value={school.id}>
+                      {school.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <div className="flex items-end">
+                <Button type="submit" disabled={busy}>
+                  Save access
+                </Button>
+              </div>
+            </form>
+          </Panel>
+
+          <Panel title="Current Access" description="Search by person, role, or school and switch access on or off.">
+            <div className="mb-4 max-w-md">
+              <Field label="Search access">
+                <Input
+                  value={accessQuery}
+                  onChange={(event) => setAccessQuery(event.target.value)}
+                  placeholder="Search by user, role, or school"
+                />
+              </Field>
+            </div>
+
+            <div className="space-y-3">
+              {filteredRoleRows.length === 0 ? (
+                <EmptyState message="No matching role assignments found." />
+              ) : (
+                filteredRoleRows.map((row) => {
+                  const profile = profileMap[row.user_id];
+                  const scopeLabel = row.school_id ? schoolMap[row.school_id]?.name ?? "Unknown school" : "Platform";
+                  return (
+                    <div key={row.id} className="rounded-2xl border border-border bg-muted/30 p-4">
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-semibold">{fullName(profile)}</p>
+                            <Badge>{ROLE_LABELS[row.role]}</Badge>
+                            <Badge tone={row.is_active ? "success" : "warning"}>
+                              {row.is_active ? "Active" : "Inactive"}
+                            </Badge>
+                          </div>
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            {profile?.email ?? "No email"} / {scopeLabel}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Granted {formatDate(row.created_at)}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant={row.is_active ? "danger" : "secondary"}
+                          onClick={() => void toggleRoleAssignment(row)}
+                          disabled={busy}
+                        >
+                          {row.is_active ? "Disable" : "Enable"}
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </Panel>
+        </div>
+      );
+    }
+
+    if (dashboardMode === "audit") {
+      return (
+        <div className="space-y-6">
+          <SectionTrail
+            items={["Dashboard", "Audit"]}
+            description="Track platform-wide actions, changes, and recent events in one roomy feed."
+            action={
+              <Button type="button" variant="secondary" onClick={() => setDashboardFocus("overview")}>
+                Back to dashboard
+              </Button>
+            }
+          />
+
+          <Panel title="Recent Activity" description="Use search to narrow the feed to a school, action, person, or entity type.">
+            <div className="mb-4 max-w-md">
+              <Field label="Search activity">
+                <Input
+                  value={auditQuery}
+                  onChange={(event) => setAuditQuery(event.target.value)}
+                  placeholder="Search by action, school, person, or type"
+                />
+              </Field>
+            </div>
+
+            <div className="space-y-3">
+              {filteredAuditLogs.length === 0 ? (
+                <EmptyState message="No matching activity found." />
+              ) : (
+                filteredAuditLogs.slice(0, 40).map((row) => {
+                  const actor = row.actor_id ? profileMap[row.actor_id] : null;
+                  const schoolLabel = row.school_id ? schoolMap[row.school_id]?.name ?? "Unknown school" : "Platform";
+                  return (
+                    <div key={row.id} className="rounded-2xl border border-border bg-muted/30 p-4">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-semibold">{titleCaseLabel(row.action)}</p>
+                            <Badge>{row.entity_type}</Badge>
+                            <Badge>{schoolLabel}</Badge>
+                          </div>
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            {actor ? fullName(actor) : "System"} / {formatDateTime(row.created_at)}
+                          </p>
+                          {row.metadata ? (
+                            <pre className="mt-3 whitespace-pre-wrap rounded-2xl bg-background/70 p-3 text-xs text-muted-foreground">
+                              {formatSettingValue(row.metadata)}
+                            </pre>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </Panel>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["Dashboard"]}
+          description="Track platform growth, jump into schools, and open deeper admin workspaces from the cards below."
+        />
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard
+            label="Total Schools"
+            value={data.counts.schools.toLocaleString()}
+            sub={`${activeSchools} active`}
+            onClick={() => onChangeView("schools")}
+          />
+          <StatCard
+            label="Total Teachers"
+            value={totalTeachers.toLocaleString()}
+            sub="Open teacher directory"
+            onClick={() => openDashboardFocus("people", "teacher")}
+          />
+          <StatCard
+            label="Total Students"
+            value={totalStudents.toLocaleString()}
+            sub="Open student directory"
+            onClick={() => openDashboardFocus("people", "student")}
+          />
+          <StatCard
+            label="Monthly Revenue"
+            value={currencyFromCents(estimatedMonthlyRevenue)}
+            sub={`${currentSubscriptions.length} live subscriptions`}
+            onClick={() => onChangeView("subscriptions")}
+          />
+        </div>
+
+        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+          <Panel title="Monthly Growth" description="New schools created over the last six months.">
+            <div className="space-y-4">
+              {schoolGrowth.map((item) => (
+                <div key={item.key}>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-medium text-foreground">{item.label}</span>
+                    <span className="text-muted-foreground">{item.count} new schools</span>
+                  </div>
+                  <div className="mt-2 h-3 rounded-full bg-muted">
+                    <div
+                      className="h-3 rounded-full bg-primary"
+                      style={{ width: `${Math.max((item.count / growthMax) * 100, item.count > 0 ? 12 : 4)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel title="Recent Schools" description="Open a school card to get a more spacious school-level workspace.">
+            <div className="space-y-3">
+              {allSchoolDirectory.slice(0, 5).map((row) => (
+                <button
+                  key={row.school_id}
+                  type="button"
+                  onClick={() => openSchoolDetail(row.school_id)}
+                  className="flex w-full items-center justify-between rounded-2xl border border-border bg-muted/25 p-4 text-left transition hover:border-primary/30 hover:bg-card"
+                >
+                  <div>
+                    <p className="font-semibold">{row.school_name}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {row.student_count} students / {row.teacher_count} teachers
+                    </p>
+                  </div>
+                  <Badge tone={row.is_active ? "success" : "warning"}>{row.is_active ? "Active" : "Inactive"}</Badge>
+                </button>
+              ))}
+            </div>
+          </Panel>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-3">
+          <button
+            type="button"
+            onClick={() => openDashboardFocus("people")}
+            className="rounded-2xl border border-border bg-card p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md"
+          >
+            <p className="text-xs font-semibold uppercase tracking-wide text-primary">Directory</p>
+            <h3 className="mt-3 text-xl font-bold">People</h3>
+            <p className="mt-2 text-sm text-muted-foreground">See teachers, students, parents, and platform accounts in one place.</p>
+          </button>
+          <button
+            type="button"
+            onClick={() => openDashboardFocus("access")}
+            className="rounded-2xl border border-border bg-card p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md"
+          >
+            <p className="text-xs font-semibold uppercase tracking-wide text-primary">Control</p>
+            <h3 className="mt-3 text-xl font-bold">Access</h3>
+            <p className="mt-2 text-sm text-muted-foreground">Grant, restore, or pause platform access without adding more sidebar items.</p>
+          </button>
+          <button
+            type="button"
+            onClick={() => openDashboardFocus("audit")}
+            className="rounded-2xl border border-border bg-card p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md"
+          >
+            <p className="text-xs font-semibold uppercase tracking-wide text-primary">History</p>
+            <h3 className="mt-3 text-xl font-bold">Audit Feed</h3>
+            <p className="mt-2 text-sm text-muted-foreground">Review the latest changes, imports, role updates, and school actions.</p>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (topLevelView === "schools") {
+    if (selectedSchoolSummary && selectedMemberDetail) {
+      return (
+        <div className="space-y-6">
+          <SectionTrail
+            items={["Schools", selectedSchoolSummary.school_name, schoolSectionLabels[schoolSection], fullName(selectedMemberDetail.profile)]}
+            description="Each profile opens into its own room so you can review access, contact details, and school membership without compressing the page."
+            action={
+              <>
+                <Button type="button" variant="secondary" onClick={() => setSelectedMemberId(null)}>
+                  Back to {schoolSectionLabels[schoolSection]}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setSelectedSchoolId(null);
+                    setSelectedMemberId(null);
+                    setSchoolSection("overview");
+                  }}
+                >
+                  All schools
+                </Button>
+              </>
+            }
+          />
+
+          <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+            <Panel title="Profile Summary" description="Basic contact details and the roles this person currently carries in the selected school.">
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-2xl font-bold">{fullName(selectedMemberDetail.profile)}</h3>
+                  <Badge tone={selectedMemberDetail.profile?.is_active ? "success" : "warning"}>
+                    {selectedMemberDetail.profile?.is_active ? "Active profile" : "Inactive profile"}
+                  </Badge>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="rounded-2xl bg-muted/35 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Email</p>
+                    <p className="mt-2 text-sm">{selectedMemberDetail.profile?.email ?? "No email on file"}</p>
+                  </div>
+                  <div className="rounded-2xl bg-muted/35 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Joined this school</p>
+                    <p className="mt-2 text-sm">{formatDate(selectedMemberDetail.joinedAt)}</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {selectedMemberDetail.rows.map((row) => (
+                    <Badge key={row.id}>{ROLE_LABELS[row.role]}</Badge>
+                  ))}
+                </div>
+              </div>
+            </Panel>
+
+            <Panel title="Access Footprint" description="See the rest of this person's current access across the whole platform.">
+              <div className="space-y-3">
+                {selectedMemberRoles.length === 0 ? (
+                  <EmptyState message="This person does not have any active role rows." />
+                ) : (
+                  selectedMemberRoles.map((row) => (
+                    <div key={row.id} className="rounded-2xl border border-border bg-muted/25 p-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone={row.is_active ? "success" : "warning"}>{ROLE_LABELS[row.role]}</Badge>
+                        <Badge>{row.school_id ? schoolMap[row.school_id]?.name ?? "Unknown school" : "Platform"}</Badge>
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">Granted {formatDate(row.created_at)}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Panel>
+          </div>
+        </div>
+      );
+    }
+
+    if (selectedSchoolSummary) {
+      return (
+        <div className="space-y-6">
+          <SectionTrail
+            items={schoolSection === "overview" ? ["Schools", selectedSchoolSummary.school_name] : ["Schools", selectedSchoolSummary.school_name, schoolSectionLabels[schoolSection]]}
+            description="Move through one school at a time so there is more room for teams, activity, and settings."
+            action={
+              <>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    setSelectedMemberId(null);
+                    setSchoolSection("overview");
+                  }}
+                >
+                  School home
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setSelectedSchoolId(null);
+                    setSelectedMemberId(null);
+                    setSchoolSection("overview");
+                  }}
+                >
+                  All schools
+                </Button>
+              </>
+            }
+          />
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            <StatCard label="School Admins" value={selectedSchoolMembers.admins.length} sub="Open team" onClick={() => setSchoolSection("admins")} />
+            <StatCard label="Teachers" value={selectedSchoolMembers.teachers.length} sub="Open teachers" onClick={() => setSchoolSection("teachers")} />
+            <StatCard label="Students" value={selectedSchoolMembers.students.length} sub="Open students" onClick={() => setSchoolSection("students")} />
+            <StatCard label="Parents" value={selectedSchoolMembers.parents.length} sub="Open parents" onClick={() => setSchoolSection("parents")} />
+            <StatCard label="Classes" value={selectedSchoolSummary.class_count} sub="Recent activity" onClick={() => setSchoolSection("activity")} />
+          </div>
+
+          {schoolSection === "overview" ? (
+            <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+              <Panel title="School Snapshot" description="Plan, status, timezone, and actions for this school.">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="rounded-2xl bg-muted/35 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Plan</p>
+                    <p className="mt-2 text-lg font-semibold">{selectedSchoolSummary.plan?.name ?? "No plan"}</p>
+                  </div>
+                  <div className="rounded-2xl bg-muted/35 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Subscription</p>
+                    <p className="mt-2 text-lg font-semibold">{selectedSchoolSummary.subscription_status ?? "No subscription"}</p>
+                  </div>
+                  <div className="rounded-2xl bg-muted/35 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Timezone</p>
+                    <p className="mt-2 text-sm">{selectedSchoolSummary.school.timezone}</p>
+                  </div>
+                  <div className="rounded-2xl bg-muted/35 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Slug</p>
+                    <p className="mt-2 text-sm">{selectedSchoolSummary.school.slug || "No slug yet"}</p>
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <div className="rounded-2xl bg-muted/35 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Created</p>
+                    <p className="mt-2 text-sm">{formatDate(selectedSchoolSummary.school.created_at)}</p>
+                  </div>
+                  <div className="rounded-2xl bg-muted/35 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Last activity</p>
+                    <p className="mt-2 text-sm">{formatDateTime(selectedSchoolSummary.last_activity_at)}</p>
+                  </div>
+                </div>
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <Button type="button" variant="secondary" onClick={() => onOpenSchool(selectedSchoolSummary.school)}>
+                    Open school dashboard
+                  </Button>
+                  <Button type="button" variant="secondary" onClick={() => void toggleSchool(selectedSchoolSummary.school)} disabled={busy}>
+                    {selectedSchoolSummary.is_active ? "Deactivate" : "Activate"}
+                  </Button>
+                  <Button type="button" variant="danger" onClick={() => void archiveSchool(selectedSchoolSummary.school)} disabled={busy}>
+                    Archive
+                  </Button>
+                </div>
+              </Panel>
+
+              <Panel title="Recent Activity" description="Recent tracked actions for this school only.">
+                <div className="space-y-3">
+                  {selectedSchoolAuditLogs.length === 0 ? (
+                    <EmptyState message="No school activity has been logged yet." />
+                  ) : (
+                    selectedSchoolAuditLogs.map((row) => (
+                      <div key={row.id} className="rounded-2xl border border-border bg-muted/25 p-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-semibold">{titleCaseLabel(row.action)}</p>
+                          <Badge>{row.entity_type}</Badge>
+                        </div>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          {row.actor_id ? fullName(profileMap[row.actor_id]) : "System"} / {formatDateTime(row.created_at)}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </Panel>
+            </div>
+          ) : schoolSection === "activity" ? (
+            <Panel title="School Activity Feed" description="Review everything logged for this school in one dedicated stream.">
+              <div className="space-y-3">
+                {selectedSchoolAuditLogs.length === 0 ? (
+                  <EmptyState message="No school activity has been logged yet." />
+                ) : (
+                  selectedSchoolAuditLogs.map((row) => (
+                    <div key={row.id} className="rounded-2xl border border-border bg-muted/25 p-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-semibold">{titleCaseLabel(row.action)}</p>
+                        <Badge>{row.entity_type}</Badge>
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        {row.actor_id ? fullName(profileMap[row.actor_id]) : "System"} / {formatDateTime(row.created_at)}
+                      </p>
+                      {row.metadata ? (
+                        <pre className="mt-3 whitespace-pre-wrap rounded-2xl bg-background/70 p-3 text-xs text-muted-foreground">
+                          {formatSettingValue(row.metadata)}
+                        </pre>
+                      ) : null}
+                    </div>
+                  ))
+                )}
+              </div>
+            </Panel>
+          ) : (
+            <Panel
+              title={schoolSectionLabels[schoolSection]}
+              description="Open a person to see a focused detail page instead of squeezing all the data into one crowded list."
+            >
+              <div className="space-y-3">
+                {currentSchoolMemberList.length === 0 ? (
+                  <EmptyState message={`No ${schoolSectionLabels[schoolSection].toLowerCase()} found yet.`} />
+                ) : (
+                  currentSchoolMemberList.map((member) => (
+                    <div key={member.userId} className="rounded-2xl border border-border bg-muted/25 p-4">
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="text-lg font-bold">{fullName(member.profile)}</h4>
+                            {unique(member.rows.map((row) => ROLE_LABELS[row.role])).map((label) => (
+                              <Badge key={label}>{label}</Badge>
+                            ))}
+                          </div>
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            {member.profile?.email ?? "No email on file"} / Joined {formatDate(member.joinedAt)}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() =>
+                            openSchoolMember(selectedSchoolSummary.school_id, schoolSection as "teachers" | "students" | "parents" | "admins", member.userId)
+                          }
+                        >
+                          Open profile
+                        </Button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Panel>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["Schools"]}
+          description="Search schools, open one into a deeper workspace, and keep extra platform tasks tucked behind roomy drill-down sections."
+        />
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Schools" value={data.counts.schools.toLocaleString()} sub={`${activeSchools} active`} />
+          <StatCard label="Subscriptions" value={currentSubscriptions.length.toLocaleString()} sub="Latest active rows" onClick={() => onChangeView("subscriptions")} />
+          <StatCard label="Students" value={totalStudents.toLocaleString()} sub="Across all schools" onClick={() => openDashboardFocus("people", "student")} />
+          <StatCard label="Teachers" value={totalTeachers.toLocaleString()} sub="Across all schools" onClick={() => openDashboardFocus("people", "teacher")} />
+        </div>
+
+        <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+          <Panel title="School Directory" description="Click into one school at a time so people, activity, and settings each have room to breathe.">
+            <div className="mb-4 max-w-md">
+              <Field label="Search schools">
+                <Input
+                  value={schoolQuery}
+                  onChange={(event) => setSchoolQuery(event.target.value)}
+                  placeholder="Search by school name, slug, plan, or timezone"
+                />
+              </Field>
+            </div>
+
+            <div className="space-y-3">
+              {schoolDirectory.length === 0 ? (
+                <EmptyState message="No matching schools found." />
+              ) : (
+                schoolDirectory.map((row) => (
+                  <div key={row.school_id} className="rounded-2xl border border-border bg-muted/25 p-4">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-lg font-bold">{row.school_name}</h3>
+                          <Badge tone={row.is_active ? "success" : "warning"}>{row.is_active ? "Active" : "Inactive"}</Badge>
+                          <Badge>{row.subscription_status ?? "No subscription"}</Badge>
+                          <Badge>{row.plan?.name ?? "No plan"}</Badge>
+                        </div>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          {row.student_count} students / {row.teacher_count} teachers / {row.class_count} classes
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {row.school.slug || "No slug"} / {row.school.timezone} / Last activity {formatDateTime(row.last_activity_at)}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button type="button" variant="secondary" onClick={() => openSchoolDetail(row.school_id)}>
+                          Open details
+                        </Button>
+                        <Button type="button" variant="secondary" onClick={() => onOpenSchool(row.school)}>
+                          Open school dashboard
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </Panel>
+
+          <div className="space-y-6">
+            <Panel title="Add a School" description="Create a school, choose its plan, and invite its first admin.">
+              <form className="grid gap-4 lg:grid-cols-2" onSubmit={submitSchool}>
+                <Field label="School name">
+                  <Input
+                    value={schoolForm.school_name}
+                    onChange={(event) => setSchoolForm((prev) => ({ ...prev, school_name: event.target.value }))}
+                    required
+                  />
+                </Field>
+                <Field label="Slug">
+                  <Input
+                    value={schoolForm.slug}
+                    onChange={(event) => setSchoolForm((prev) => ({ ...prev, slug: event.target.value }))}
+                    placeholder="auto-generated if blank"
+                  />
+                </Field>
+                <Field label="Timezone">
+                  <Input
+                    value={schoolForm.timezone}
+                    onChange={(event) => setSchoolForm((prev) => ({ ...prev, timezone: event.target.value }))}
+                    required
+                  />
+                </Field>
+                <Field label="Subscription plan">
+                  <Select
+                    value={schoolForm.plan_id}
+                    onChange={(event) => setSchoolForm((prev) => ({ ...prev, plan_id: event.target.value }))}
+                    required
+                  >
+                    {data.plans.map((plan) => (
+                      <option key={plan.id} value={plan.id}>
+                        {plan.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="Admin first name">
+                  <Input
+                    value={schoolForm.admin_first_name}
+                    onChange={(event) => setSchoolForm((prev) => ({ ...prev, admin_first_name: event.target.value }))}
+                    required
+                  />
+                </Field>
+                <Field label="Admin last name">
+                  <Input
+                    value={schoolForm.admin_last_name}
+                    onChange={(event) => setSchoolForm((prev) => ({ ...prev, admin_last_name: event.target.value }))}
+                  />
+                </Field>
+                <Field label="Admin email">
+                  <Input
+                    type="email"
+                    value={schoolForm.admin_email}
+                    onChange={(event) => setSchoolForm((prev) => ({ ...prev, admin_email: event.target.value }))}
+                    required
+                  />
+                </Field>
+                <div className="lg:col-span-2">
+                  <Button type="submit" disabled={busy}>
+                    <Plus className="w-4 h-4" />
+                    {busy ? "Provisioning..." : "Provision school"}
+                  </Button>
+                </div>
+              </form>
+            </Panel>
+
+            <Panel title="More Space, Less Clutter" description="Open deeper platform tools only when you need them.">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <button
+                  type="button"
+                  onClick={() => openDashboardFocus("people")}
+                  className="rounded-2xl border border-border bg-muted/25 p-4 text-left transition hover:border-primary/30 hover:bg-card"
+                >
+                  <p className="font-semibold">People</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Open platform directory</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openDashboardFocus("access")}
+                  className="rounded-2xl border border-border bg-muted/25 p-4 text-left transition hover:border-primary/30 hover:bg-card"
+                >
+                  <p className="font-semibold">Access</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Grant or pause roles</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openDashboardFocus("audit")}
+                  className="rounded-2xl border border-border bg-muted/25 p-4 text-left transition hover:border-primary/30 hover:bg-card"
+                >
+                  <p className="font-semibold">Audit</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Review recent actions</p>
+                </button>
+              </div>
+            </Panel>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (topLevelView === "analytics") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["Analytics"]}
+          description="See school mix, estimated subscription revenue, and recent platform growth without leaving the Super Admin workspace."
+        />
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Active Schools" value={activeSchools} sub="Open school directory" onClick={() => onChangeView("schools")} />
+          <StatCard label="Plans in Use" value={planUsage.filter((item) => item.schoolCount > 0).length} sub="Click a plan below" onClick={() => onChangeView("subscriptions")} />
+          <StatCard label="Students" value={totalStudents.toLocaleString()} sub="Across all schools" />
+          <StatCard label="Estimated Revenue" value={currencyFromCents(estimatedMonthlyRevenue)} sub="Based on current subscriptions" onClick={() => onChangeView("subscriptions")} />
+        </div>
+
+        <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+          <Panel title="Schools by Plan" description="Each bar shows how many schools are currently assigned to that plan.">
+            <div className="space-y-4">
+              {planUsage.map((entry) => (
+                <button
+                  key={entry.plan.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedPlanId(entry.plan.id);
+                    onChangeView("subscriptions");
+                  }}
+                  className="w-full rounded-2xl border border-border bg-muted/25 p-4 text-left transition hover:border-primary/30 hover:bg-card"
+                >
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="font-semibold">{entry.plan.name}</p>
+                      <p className="text-sm text-muted-foreground">{currencyFromCents(entry.plan.price_cents)} / {entry.plan.billing_cycle}</p>
+                    </div>
+                    <Badge>{entry.schoolCount} schools</Badge>
+                  </div>
+                  <div className="mt-3 h-3 rounded-full bg-muted">
+                    <div
+                      className="h-3 rounded-full bg-primary"
+                      style={{ width: `${Math.max((entry.schoolCount / planUsageMax) * 100, entry.schoolCount > 0 ? 12 : 4)}%` }}
+                    />
+                  </div>
+                </button>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel title="Revenue Overview" description="This compares estimated monthly revenue by plan using the latest subscription row for each school.">
+            <div className="grid gap-4">
+              {planUsage.map((entry) => {
+                const revenueMax = Math.max(...planUsage.map((item) => item.revenueCents), 1);
+                return (
+                  <div key={entry.plan.id} className="rounded-2xl border border-border bg-muted/25 p-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <p className="font-semibold">{entry.plan.name}</p>
+                        <p className="text-sm text-muted-foreground">{entry.schoolCount} schools</p>
+                      </div>
+                      <p className="text-lg font-bold">{currencyFromCents(entry.revenueCents)}</p>
+                    </div>
+                    <div className="mt-3 h-3 rounded-full bg-muted">
+                      <div
+                        className="h-3 rounded-full bg-primary"
+                        style={{ width: `${Math.max((entry.revenueCents / revenueMax) * 100, entry.revenueCents > 0 ? 12 : 4)}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Panel>
+        </div>
+      </div>
+    );
+  }
+
+  if (topLevelView === "subscriptions") {
+    if (selectedPlanUsage) {
+      return (
+        <div className="space-y-6">
+          <SectionTrail
+            items={["Subscriptions", selectedPlanUsage.plan.name]}
+            description="Edit this plan and review every school that currently uses it."
+            action={
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setSelectedPlanId(null);
+                  resetPlanForm();
+                }}
+              >
+                All plans
+              </Button>
+            }
+          />
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard label="Price" value={currencyFromCents(selectedPlanUsage.plan.price_cents)} sub={`per ${selectedPlanUsage.plan.billing_cycle}`} />
+            <StatCard label="Schools" value={selectedPlanUsage.schoolCount} sub="Current latest subscriptions" />
+            <StatCard label="Revenue" value={currencyFromCents(selectedPlanUsage.revenueCents)} sub="Estimated monthly total" />
+            <StatCard
+              label="Max Students"
+              value={selectedPlanUsage.plan.max_students ?? "Unlimited"}
+              sub={selectedPlanUsage.plan.max_teachers == null ? "Teachers unlimited" : `${selectedPlanUsage.plan.max_teachers} teachers`}
+            />
+          </div>
+
+          <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+            <Panel
+              title="Plan Details"
+              description="Adjust plan limits, price, billing cycle, and included features using the same simple editor."
+              action={
+                <Button type="button" variant="ghost" onClick={() => resetPlanForm()}>
+                  Clear form
+                </Button>
+              }
+            >
+              <form className="grid gap-4 lg:grid-cols-2" onSubmit={savePlan}>
+                <Field label="Plan name">
+                  <Input
+                    value={planForm.name}
+                    onChange={(event) => setPlanForm((prev) => ({ ...prev, name: event.target.value }))}
+                    required
+                  />
+                </Field>
+                <Field label="Billing cycle">
+                  <Select
+                    value={planForm.billing_cycle}
+                    onChange={(event) => setPlanForm((prev) => ({ ...prev, billing_cycle: event.target.value }))}
+                  >
+                    <option value="monthly">monthly</option>
+                    <option value="yearly">yearly</option>
+                  </Select>
+                </Field>
+                <Field label="Price (cents)">
+                  <Input
+                    value={planForm.price_cents}
+                    onChange={(event) => setPlanForm((prev) => ({ ...prev, price_cents: event.target.value }))}
+                    required
+                  />
+                </Field>
+                <Field label="Active">
+                  <Select
+                    value={planForm.is_active ? "true" : "false"}
+                    onChange={(event) => setPlanForm((prev) => ({ ...prev, is_active: event.target.value === "true" }))}
+                  >
+                    <option value="true">Active</option>
+                    <option value="false">Inactive</option>
+                  </Select>
+                </Field>
+                <Field label="Max students">
+                  <Input
+                    value={planForm.max_students}
+                    onChange={(event) => setPlanForm((prev) => ({ ...prev, max_students: event.target.value }))}
+                    placeholder="leave blank for unlimited"
+                  />
+                </Field>
+                <Field label="Max teachers">
+                  <Input
+                    value={planForm.max_teachers}
+                    onChange={(event) => setPlanForm((prev) => ({ ...prev, max_teachers: event.target.value }))}
+                    placeholder="leave blank for unlimited"
+                  />
+                </Field>
+                <div className="lg:col-span-2">
+                  <Field label="Included features">
+                    <TextArea
+                      rows={5}
+                      value={planForm.featuresInput}
+                      onChange={(event) => setPlanForm((prev) => ({ ...prev, featuresInput: event.target.value }))}
+                      placeholder={"Lessons\nHomework\nMonthly Tests\nMessaging\nReports"}
+                    />
+                  </Field>
+                </div>
+                <div className="lg:col-span-2 flex flex-wrap gap-2">
+                  <Button type="submit" disabled={busy}>
+                    Save plan
+                  </Button>
+                  <Button type="button" variant="secondary" disabled={busy} onClick={() => togglePlan(selectedPlanUsage.plan)}>
+                    {selectedPlanUsage.plan.is_active ? "Deactivate plan" : "Activate plan"}
+                  </Button>
+                </div>
+              </form>
+            </Panel>
+
+            <Panel title="Schools on This Plan" description="Update the live subscription row for each school using this plan.">
+              <div className="space-y-3">
+                {selectedPlanUsage.schoolsOnPlan.length === 0 ? (
+                  <EmptyState message="No schools are using this plan yet." />
+                ) : (
+                  selectedPlanUsage.schoolsOnPlan.map((subscription) => {
+                    const school = schoolMap[subscription.school_id];
+                    const draft = subscriptionDrafts[subscription.id];
+                    return (
+                      <div key={subscription.id} className="rounded-2xl border border-border bg-muted/25 p-4">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <p className="font-semibold">{school?.name ?? "Unknown school"}</p>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                              Status {subscription.status} / Starts {formatDate(subscription.starts_at)}
+                            </p>
+                          </div>
+                          <Button type="button" variant="secondary" disabled={busy} onClick={() => void saveSubscription(subscription)}>
+                            Save school subscription
+                          </Button>
+                        </div>
+                        <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                          <Field label="Plan">
+                            <Select
+                              value={draft?.plan_id ?? subscription.plan_id}
+                              onChange={(event) => updateSubscriptionDraft(subscription.id, "plan_id", event.target.value)}
+                            >
+                              {data.plans.map((plan) => (
+                                <option key={plan.id} value={plan.id}>
+                                  {plan.name}
+                                </option>
+                              ))}
+                            </Select>
+                          </Field>
+                          <Field label="Status">
+                            <Select
+                              value={draft?.status ?? subscription.status}
+                              onChange={(event) => updateSubscriptionDraft(subscription.id, "status", event.target.value)}
+                            >
+                              <option value="trialing">trialing</option>
+                              <option value="active">active</option>
+                              <option value="past_due">past_due</option>
+                              <option value="canceled">canceled</option>
+                              <option value="suspended">suspended</option>
+                            </Select>
+                          </Field>
+                          <Field label="Ends on">
+                            <Input
+                              type="date"
+                              value={draft?.ends_at ?? ""}
+                              onChange={(event) => updateSubscriptionDraft(subscription.id, "ends_at", event.target.value)}
+                            />
+                          </Field>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </Panel>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["Subscriptions"]}
+          description="Keep the sidebar simple, then click one plan card to open a larger editing workspace for that plan."
+          action={
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                resetPlanForm();
+                setSelectedPlanId(null);
+              }}
+            >
+              New plan
+            </Button>
+          }
+        />
+
+        <div className="grid gap-6 xl:grid-cols-3">
+          {planUsage.map((entry) => (
+            <button
+              key={entry.plan.id}
+              type="button"
+              onClick={() => {
+                editPlan(entry.plan);
+                setSelectedPlanId(entry.plan.id);
+              }}
+              className="rounded-[1.8rem] border border-border bg-card p-8 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md"
+            >
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-secondary text-primary">
+                <Layers className="h-5 w-5" />
+              </div>
+              <h3 className="mt-5 text-3xl font-bold">{entry.plan.name}</h3>
+              <p className="mt-2 text-3xl font-bold text-primary">{currencyFromCents(entry.plan.price_cents)}</p>
+              <p className="mt-1 text-sm text-muted-foreground">per {entry.plan.billing_cycle}</p>
+              <p className="mt-4 text-sm text-muted-foreground">{entry.schoolCount} schools</p>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (topLevelView === "settings") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={selectedSetting ? ["Settings", titleCaseLabel(selectedSetting.key)] : ["Settings"]}
+          description="Keep many platform settings manageable by opening one setting at a time in a wider editor."
+          action={
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setSelectedSettingKey(null);
+                resetSettingForm();
+              }}
+            >
+              New setting
+            </Button>
+          }
+        />
+
+        <div className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
+          <Panel title="Saved Settings" description="Search and open any saved setting without stretching one long form down the page.">
+            <div className="mb-4">
+              <Field label="Search settings">
+                <Input
+                  value={settingsQuery}
+                  onChange={(event) => setSettingsQuery(event.target.value)}
+                  placeholder="Search by setting name or value"
+                />
+              </Field>
+            </div>
+            <div className="space-y-3">
+              {settingsDirectory.length === 0 ? (
+                <EmptyState message="No matching settings found." />
+              ) : (
+                settingsDirectory.map((setting) => (
+                  <button
+                    key={setting.key}
+                    type="button"
+                    onClick={() => {
+                      loadSettingIntoForm(setting);
+                      setSelectedSettingKey(setting.key);
+                    }}
+                    className={`w-full rounded-2xl border p-4 text-left transition hover:border-primary/30 hover:bg-card ${
+                      selectedSettingKey === setting.key ? "border-primary/40 bg-card ring-2 ring-primary/10" : "border-border bg-muted/25"
+                    }`}
+                  >
+                    <p className="font-semibold">{titleCaseLabel(setting.key)}</p>
+                    <p className="mt-2 text-sm text-muted-foreground">{formatInlineValue(setting.value)}</p>
+                  </button>
+                ))
+              )}
+            </div>
+          </Panel>
+
+          <Panel
+            title={selectedSetting ? "Edit Setting" : "Create Setting"}
+            description="Use simple text, number, yes/no, list, or named values. This layout stays roomy even when you add many settings."
+          >
+            <form className="grid gap-4 lg:grid-cols-[220px_180px_1fr_auto]" onSubmit={saveSetting}>
+              <Field label="Setting name">
+                <Input
+                  value={settingForm.key}
+                  onChange={(event) => setSettingForm((prev) => ({ ...prev, key: event.target.value }))}
+                  required
+                />
+              </Field>
+              <Field label="Type">
+                <Select
+                  value={settingForm.valueType}
+                  onChange={(event) =>
+                    setSettingForm((prev) => ({ ...prev, valueType: event.target.value as SettingValueType }))
+                  }
+                >
+                  <option value="text">Text</option>
+                  <option value="number">Number</option>
+                  <option value="boolean">Yes / No</option>
+                  <option value="list">List</option>
+                  <option value="pairs">Named values</option>
+                </Select>
+              </Field>
+              <Field
+                label={
+                  settingForm.valueType === "list"
+                    ? "Items"
+                    : settingForm.valueType === "pairs"
+                      ? "Values"
+                      : "Value"
+                }
+              >
+                {settingForm.valueType === "boolean" ? (
+                  <Select
+                    value={settingForm.booleanValue}
+                    onChange={(event) => setSettingForm((prev) => ({ ...prev, booleanValue: event.target.value as "true" | "false" }))}
+                  >
+                    <option value="true">Yes</option>
+                    <option value="false">No</option>
+                  </Select>
+                ) : (
+                  <TextArea
+                    rows={6}
+                    value={settingForm.valueInput}
+                    onChange={(event) => setSettingForm((prev) => ({ ...prev, valueInput: event.target.value }))}
+                    placeholder={
+                      settingForm.valueType === "list"
+                        ? "Item one\nItem two"
+                        : settingForm.valueType === "pairs"
+                          ? "Support email = help@school.com\nSchool day starts = 8:00 AM"
+                          : settingForm.valueType === "number"
+                            ? "25"
+                            : "Smart Class"
+                    }
+                  />
+                )}
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {settingForm.valueType === "list"
+                    ? "Write one item per line."
+                    : settingForm.valueType === "pairs"
+                      ? "Write one name and value per line, like Support email = help@school.com."
+                      : settingForm.valueType === "boolean"
+                        ? "Choose whether this setting is on or off."
+                        : "Use a simple value only."}
+                </p>
+              </Field>
+              <div className="flex items-end">
+                <div className="flex gap-2">
+                  <Button type="submit" disabled={busy}>
+                    Save
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setSelectedSettingKey(null);
+                      resetSettingForm();
+                    }}
+                  >
+                    Clear
+                  </Button>
+                </div>
+              </div>
+            </form>
+
+            {selectedSetting ? (
+              <div className="mt-6 rounded-2xl border border-border bg-muted/25 p-4">
+                <p className="text-sm font-semibold">{titleCaseLabel(selectedSetting.key)}</p>
+                <pre className="mt-3 whitespace-pre-wrap text-xs text-muted-foreground">
+                  {formatSettingValue(selectedSetting.value)}
+                </pre>
+              </div>
+            ) : null}
+          </Panel>
+        </div>
+      </div>
+    );
+  }
 
   if (view === "dashboard") {
     return (
@@ -6691,6 +8203,7 @@ export default function SmartClassLiveApp() {
             data={data}
             onNotify={notify}
             onRefresh={refreshWorkspaceData}
+            onChangeView={setView}
             onOpenSchool={(school) =>
               setWorkspaceOverride({
                 key: `override-school-admin-${school.id}`,

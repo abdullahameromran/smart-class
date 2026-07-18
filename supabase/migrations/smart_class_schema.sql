@@ -845,17 +845,23 @@ returns boolean language sql stable security definer as $$
 $$;
 
 create or replace function can_insert_message(p_school_id uuid)
-returns boolean language sql stable security definer as $$
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
   select auth.uid() is not null
+    and p_school_id is not null
     and (
-      is_super_admin()
+      public.is_super_admin()
       or exists (
         select 1
-        from user_school_roles usr
+        from public.user_school_roles usr
         where usr.user_id = auth.uid()
           and usr.school_id = p_school_id
           and usr.is_active
-          and usr.role = any(array['school_admin','teacher','student','parent']::user_role[])
+          and usr.role = any(array['school_admin','teacher','student','parent']::public.user_role[])
       )
     );
 $$;
@@ -930,10 +936,15 @@ begin
   return new;
 end $$;
 
-create or replace function set_message_sender() returns trigger language plpgsql as $$
+create or replace function set_message_sender()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
 begin
   if auth.uid() is not null then
-    new.sender_id = auth.uid();
+    new.sender_id := auth.uid();
   end if;
   return new;
 end $$;
