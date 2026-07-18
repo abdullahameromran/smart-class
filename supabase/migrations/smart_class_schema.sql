@@ -524,6 +524,22 @@ create table device_tokens (
 );
 create index idx_dt_user on device_tokens(user_id);
 
+-- Public website waitlist leads for early access and sales follow-up
+create table waitlist_signups (
+  id            uuid primary key default gen_random_uuid(),
+  full_name     varchar(150) not null,
+  email         varchar(255) not null unique,
+  phone         varchar(30) not null,
+  source        varchar(50) not null default 'landing_page',
+  status        varchar(20) not null default 'new', -- new|contacted|qualified|closed
+  contacted_at  timestamptz,
+  created_at    timestamptz not null default now()
+);
+create index idx_waitlist_status on waitlist_signups(status);
+create index idx_waitlist_created on waitlist_signups(created_at desc);
+grant insert on waitlist_signups to anon, authenticated;
+grant select on waitlist_signups to authenticated, service_role;
+
 -- =====================================================================
 -- 8. HELPER FUNCTIONS (used everywhere in RLS)
 -- =====================================================================
@@ -609,6 +625,7 @@ alter table student_documents enable row level security;
 alter table platform_settings enable row level security;
 alter table teacher_attendance_records enable row level security;
 alter table device_tokens enable row level security;
+alter table waitlist_signups enable row level security;
 
 -- schools: super admin full; members of the school can read it
 create policy schools_select on schools for select
@@ -991,6 +1008,10 @@ create policy tar_write on teacher_attendance_records for all using (
 
 -- device tokens: user manages their own only
 create policy dt_all on device_tokens for all using ( user_id = auth.uid() ) with check ( user_id = auth.uid() );
+
+-- public waitlist: anyone can join; super admin can review leads later
+create policy waitlist_insert on waitlist_signups for insert with check ( true );
+create policy waitlist_select on waitlist_signups for select using ( is_super_admin() );
 
 -- =====================================================================
 -- 10. TRIGGERS

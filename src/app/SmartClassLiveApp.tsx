@@ -3242,17 +3242,32 @@ function WorkspaceShell({
                 : "sticky top-4 h-[calc(100vh-2rem)]"
             }`}
           >
-            <div className="rounded-[1.5rem] bg-secondary p-4 shadow-sm">
-              <div className="flex items-center gap-4">
-                <img
-                  src={smartClassLogo}
-                  alt="Smart Class"
-                  className="h-16 w-16 rounded-[1.35rem] object-cover shadow-[0_14px_30px_rgba(15,23,42,0.14)]"
-                />
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Smart Class</p>
-                  <h1 className="mt-2 text-2xl font-bold">{workspace.schoolName}</h1>
-                  <p className="mt-1 text-sm text-muted-foreground">{ROLE_LABELS[workspace.role]}</p>
+            <div className="overflow-hidden rounded-[1.75rem] border border-border/70 bg-[linear-gradient(180deg,rgba(124,92,191,0.12),rgba(255,255,255,0.88))] p-4 shadow-[0_18px_45px_rgba(15,23,42,0.08)]">
+              <div className="flex items-start gap-4">
+                <div className="shrink-0 rounded-[1.45rem] bg-white p-2.5 shadow-[0_16px_32px_rgba(15,23,42,0.12)] ring-1 ring-white/80">
+                  <img
+                    src={smartClassLogo}
+                    alt="Smart Class"
+                    className="h-14 w-14 rounded-[1rem] object-cover"
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-primary/90">Smart Class</p>
+                    <Badge tone="default">{ROLE_LABELS[workspace.role]}</Badge>
+                  </div>
+                  <h1 className="mt-3 text-[1.7rem] font-bold leading-[1.1] tracking-tight text-foreground">
+                    {workspace.schoolName}
+                  </h1>
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-white/75 px-2.5 py-1 font-medium text-foreground/80 ring-1 ring-border/60">
+                      <Building2 className="h-3.5 w-3.5 text-primary" />
+                      {workspace.school ? workspace.school.slug : "platform"}
+                    </span>
+                    <span className="inline-flex rounded-full bg-white/65 px-2.5 py-1 font-medium ring-1 ring-border/60">
+                      {workspace.school?.timezone ?? "Platform workspace"}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -3355,18 +3370,14 @@ async function joinWaitlist({
   email: string;
   phone: string;
 }) {
-  return unwrap(
-    await supabase
-      .from("waitlist_signups")
-      .insert({
-        full_name: fullName.trim(),
-        email: email.trim().toLowerCase(),
-        phone: phone.trim(),
-        source: "landing_page",
-      })
-      .select("id")
-      .single(),
-  ) as { id: string };
+  unwrap(
+    await supabase.from("waitlist_signups").insert({
+      full_name: fullName.trim(),
+      email: email.trim().toLowerCase(),
+      phone: phone.trim(),
+      source: "landing_page",
+    }),
+  );
 }
 
 function slugify(value: string) {
@@ -3400,15 +3411,106 @@ function ConfigScreen() {
 function LandingPage({
   onLogin,
   onSignup,
+  onNotify,
 }: {
   onLogin: () => void;
   onSignup: () => void;
+  onNotify: (kind: "success" | "error" | "info", message: string) => void;
 }) {
+  const [waitlistForm, setWaitlistForm] = useState({
+    fullName: "",
+    email: "",
+    phone: "",
+  });
+  const [busy, setBusy] = useState(false);
+
+  const submitWaitlist = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const fullName = waitlistForm.fullName.trim();
+    const email = waitlistForm.email.trim();
+    const phone = waitlistForm.phone.trim();
+
+    if (!fullName || !email || !phone) {
+      onNotify("error", "Please add your name, email, and phone number.");
+      return;
+    }
+
+    if (phone.replace(/[^\d+]/g, "").length < 7) {
+      onNotify("error", "Please enter a valid phone number.");
+      return;
+    }
+
+    try {
+      setBusy(true);
+      await joinWaitlist({ fullName, email, phone });
+      setWaitlistForm({
+        fullName: "",
+        email: "",
+        phone: "",
+      });
+      onNotify("success", "You're on the waiting list. We will contact you soon.");
+    } catch (error) {
+      const message =
+        typeof error === "object" && error && "code" in error && (error as { code?: string }).code === "23505"
+          ? "This email is already on the waiting list."
+          : error instanceof Error
+            ? error.message
+            : "Could not save your details right now.";
+      onNotify("info", message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const highlights = [
+    {
+      icon: <Building2 className="h-5 w-5" />,
+      title: "School setup in one flow",
+      body: "Create the school, invite the first admin, and start organizing classes, people, and schedules quickly.",
+    },
+    {
+      icon: <Users className="h-5 w-5" />,
+      title: "Built for every role",
+      body: "Super Admin, School Admin, Teacher, Student, and Parent each get a focused portal with the right access.",
+    },
+    {
+      icon: <Shield className="h-5 w-5" />,
+      title: "Safe by design",
+      body: "Each school stays isolated with role-based access and tenant-first rules across the platform.",
+    },
+  ];
+
+  const proofPoints = [
+    "Academic setup and timetable management",
+    "Attendance, homework, monthly tests, and grades",
+    "Announcements and private school messaging",
+    "Multi-tenant access for growing school groups",
+  ];
+
+  const audienceCards = [
+    {
+      title: "School owners",
+      text: "Launch a usable digital school workspace without patching together many different tools.",
+      icon: <Sparkles className="h-5 w-5" />,
+    },
+    {
+      title: "School admins",
+      text: "Manage structure, people, schedules, and daily school operations from one dashboard.",
+      icon: <Calendar className="h-5 w-5" />,
+    },
+    {
+      title: "Teachers and families",
+      text: "Keep lessons, attendance, updates, and communication clear every day.",
+      icon: <GraduationCap className="h-5 w-5" />,
+    },
+  ];
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-background text-foreground">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.16),_transparent_30%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.14),_transparent_28%)]" />
-      <div className="relative mx-auto flex min-h-screen max-w-7xl flex-col px-4 py-6">
-        <header className="flex items-center justify-between rounded-[2rem] border border-border/70 bg-card/85 px-5 py-4 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur transition-all duration-500 hover:-translate-y-0.5 hover:shadow-[0_26px_75px_rgba(15,23,42,0.12)]">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(124,92,191,0.18),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.16),_transparent_24%),linear-gradient(180deg,_rgba(255,255,255,0.9),_rgba(245,243,255,0.96))]" />
+      <div className="relative mx-auto flex min-h-screen max-w-7xl flex-col px-4 py-6 lg:px-6">
+        <header className="sticky top-4 z-30 flex flex-wrap items-center justify-between gap-4 rounded-[2rem] border border-border/70 bg-card/88 px-5 py-4 shadow-[0_24px_70px_rgba(15,23,42,0.08)] backdrop-blur-xl transition-all duration-500 hover:-translate-y-0.5 hover:shadow-[0_30px_80px_rgba(15,23,42,0.1)]">
           <div className="flex items-center gap-4">
             <img
               src={smartClassLogo}
@@ -3417,96 +3519,174 @@ function LandingPage({
             />
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Smart Class</p>
-              <h1 className="mt-1 text-xl font-bold">Connected school management</h1>
+              <h1 className="mt-1 text-xl font-bold">School management that feels ready from day one</h1>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={onLogin}>
               Log in
             </Button>
-            <Button onClick={onSignup}>Create account</Button>
+            <Button onClick={onSignup}>Start free account</Button>
           </div>
         </header>
 
-        <div className="mt-6 grid flex-1 gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-          <section className="rounded-[2.25rem] border border-border/70 bg-card/92 p-8 shadow-[0_26px_90px_rgba(15,23,42,0.08)] backdrop-blur transition-all duration-500 hover:-translate-y-1 hover:shadow-[0_34px_100px_rgba(15,23,42,0.12)]">
-            <Badge>Simple landing page</Badge>
-            <div className="mt-6 flex items-center gap-5">
-              <img
-                src={smartClassLogo}
-                alt="Smart Class"
-                className="h-20 w-20 rounded-[1.75rem] object-cover shadow-[0_20px_40px_rgba(15,23,42,0.14)]"
-              />
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Smart Class</p>
-                <p className="mt-2 text-sm text-muted-foreground">A cleaner front door for the full multi-tenant school platform.</p>
-              </div>
+        <main className="mt-6 grid flex-1 gap-6 xl:grid-cols-[1.12fr_0.88fr]">
+          <section className="rounded-[2.4rem] border border-border/70 bg-card/92 p-8 shadow-[0_30px_100px_rgba(15,23,42,0.08)] backdrop-blur lg:p-10">
+            <div className="flex flex-wrap items-center gap-3">
+              <Badge>Now open for early schools</Badge>
+              <Badge tone="success">Waitlist active</Badge>
             </div>
-            <h2 className="mt-5 max-w-4xl text-5xl font-bold leading-[1.04] tracking-tight">
-              One place for schools, teachers, students, parents, and platform admins.
+            <h2 className="mt-6 max-w-4xl text-5xl font-bold leading-[1.02] tracking-tight lg:text-6xl">
+              Launch your school with one smooth platform for operations, learning, and communication.
             </h2>
-            <p className="mt-5 max-w-3xl text-base text-muted-foreground">
-              Smart Class brings school setup, class management, lessons, homework, tests, announcements, and messaging into one clean system.
+            <p className="mt-6 max-w-3xl text-lg leading-8 text-muted-foreground">
+              Smart Class helps schools move faster with structured setup, role-based access, academic planning, attendance,
+              assessments, announcements, and messaging in one connected experience.
             </p>
 
-            <div className="mt-8 grid gap-4 md:grid-cols-3">
-              <StatCard label="School setup" value="Fast" sub="Create a school and invite its first admin" />
-              <StatCard label="Daily work" value="Organized" sub="Lessons, attendance, announcements, and messages" />
-              <StatCard label="Access" value="Role-based" sub="Platform admin, school admin, teacher, student, and parent" />
-            </div>
-
-            <div className="mt-8 grid gap-4 lg:grid-cols-2">
-              <div className="rounded-[1.75rem] border border-border/60 bg-secondary/60 p-5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
-                <p className="text-sm font-semibold text-foreground">Public pages now</p>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  We now have a basic landing page at `/`, plus separate `/login` and `/signup` screens.
-                </p>
-                <Button type="button" variant="secondary" onClick={onLogin} className="mt-4">
-                  Open login screen
-                </Button>
-              </div>
-              <div className="rounded-[1.75rem] border border-border/60 bg-muted/45 p-5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
-                <p className="text-sm font-semibold text-foreground">Dashboard pages now</p>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Dashboard sections can open from real paths like `/teachers`, `/students`, `/messages`, and `/settings`.
-                </p>
-              </div>
-            </div>
-
             <div className="mt-8 flex flex-wrap gap-3">
-              <Button onClick={onSignup}>Start with sign up</Button>
-              <Button variant="secondary" onClick={onLogin}>
-                Go to login
+              <Button onClick={onSignup} className="px-6 py-3">
+                Start your account
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+              <Button variant="secondary" onClick={onLogin} className="px-6 py-3">
+                Log in
               </Button>
             </div>
-          </section>
 
-          <aside className="rounded-[2.25rem] border border-border/70 bg-card/92 p-8 shadow-[0_26px_90px_rgba(15,23,42,0.08)] backdrop-blur transition-all duration-500 hover:-translate-y-1 hover:shadow-[0_34px_100px_rgba(15,23,42,0.12)]">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">What is inside</p>
-            <div className="mt-5 space-y-4">
-              {[
-                "Platform overview for Super Admin",
-                "School setup and academic structure",
-                "Teacher lesson and assessment tools",
-                "Student learning and grades pages",
-                "Parent follow-up and school messaging",
-              ].map((item) => (
+            <div className="mt-8 grid gap-4 md:grid-cols-3">
+              <StatCard label="Setup" value="Fast" sub="School, people, classes, and timetable in one flow" />
+              <StatCard label="Daily Use" value="Real" sub="Attendance, homework, tests, messages, and updates" />
+              <StatCard label="Security" value="Scoped" sub="Each school sees only its own data" />
+            </div>
+
+            <div className="mt-10 grid gap-4 md:grid-cols-2">
+              {proofPoints.map((item) => (
                 <div
                   key={item}
-                  className="rounded-[1.5rem] border border-border/60 bg-muted/35 px-4 py-4 text-sm text-muted-foreground transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/25 hover:bg-background/75 hover:shadow-md"
+                  className="flex items-start gap-3 rounded-[1.7rem] border border-border/60 bg-muted/25 px-4 py-4 transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/25 hover:bg-background/80 hover:shadow-md"
                 >
-                  {item}
+                  <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-2xl bg-secondary text-primary">
+                    <CheckCircle2 className="h-4 w-4" />
+                  </div>
+                  <p className="text-sm leading-6 text-foreground">{item}</p>
                 </div>
               ))}
             </div>
-            <div className="mt-6 rounded-[1.75rem] bg-primary px-5 py-5 text-primary-foreground shadow-[0_20px_50px_rgba(37,99,235,0.28)]">
-              <p className="text-sm font-semibold">More public pages can come later.</p>
-              <p className="mt-2 text-sm text-primary-foreground/80">
-                This keeps the first version simple while giving the app a cleaner structure now.
+          </section>
+
+          <aside className="space-y-6">
+            <section className="rounded-[2.4rem] border border-border/70 bg-card/92 p-8 shadow-[0_30px_100px_rgba(15,23,42,0.08)] backdrop-blur">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Join the waiting list</p>
+              <h3 className="mt-4 text-3xl font-bold text-foreground">Get early access for your school</h3>
+              <p className="mt-3 text-sm leading-7 text-muted-foreground">
+                Share your details and we will contact you about onboarding, early access, and the best setup path for your school.
               </p>
-            </div>
+
+              <form className="mt-6 space-y-4" onSubmit={submitWaitlist}>
+                <Field label="Full name">
+                  <Input
+                    value={waitlistForm.fullName}
+                    placeholder="Your full name"
+                    onChange={(event) => setWaitlistForm((prev) => ({ ...prev, fullName: event.target.value }))}
+                    required
+                  />
+                </Field>
+                <Field label="Work email">
+                  <Input
+                    type="email"
+                    value={waitlistForm.email}
+                    placeholder="name@school.com"
+                    onChange={(event) => setWaitlistForm((prev) => ({ ...prev, email: event.target.value }))}
+                    required
+                  />
+                </Field>
+                <Field label="Phone number">
+                  <Input
+                    type="tel"
+                    value={waitlistForm.phone}
+                    placeholder="+20 1X XXX XXX XX"
+                    onChange={(event) => setWaitlistForm((prev) => ({ ...prev, phone: event.target.value }))}
+                    required
+                  />
+                </Field>
+                <Button type="submit" className="h-12 w-full rounded-2xl text-base" disabled={busy}>
+                  {busy ? "Saving your place..." : "Join waiting list"}
+                </Button>
+              </form>
+
+              <div className="mt-5 rounded-[1.5rem] bg-secondary/55 p-4 text-sm text-muted-foreground">
+                We only use this to contact you about Smart Class access and onboarding.
+              </div>
+            </section>
+
+            <section className="rounded-[2.4rem] border border-border/70 bg-card/92 p-8 shadow-[0_30px_100px_rgba(15,23,42,0.08)] backdrop-blur">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Why schools join</p>
+              <div className="mt-5 space-y-4">
+                {highlights.map((item) => (
+                  <div key={item.title} className="rounded-[1.6rem] border border-border/60 bg-muted/25 p-4 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-secondary text-primary">
+                      {item.icon}
+                    </div>
+                    <p className="mt-4 font-semibold text-foreground">{item.title}</p>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">{item.body}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
           </aside>
-        </div>
+        </main>
+
+        <section className="mt-6 grid gap-6 lg:grid-cols-3">
+          {audienceCards.map((item) => (
+            <div
+              key={item.title}
+              className="rounded-[2rem] border border-border/70 bg-card/88 p-6 shadow-[0_20px_60px_rgba(15,23,42,0.06)] backdrop-blur transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_24px_70px_rgba(15,23,42,0.1)]"
+            >
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-secondary text-primary">
+                {item.icon}
+              </div>
+              <h4 className="mt-5 text-xl font-bold text-foreground">{item.title}</h4>
+              <p className="mt-3 text-sm leading-7 text-muted-foreground">{item.text}</p>
+            </div>
+          ))}
+        </section>
+
+        <section className="mt-6 rounded-[2.4rem] border border-border/70 bg-card/90 p-8 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur lg:flex lg:items-center lg:justify-between lg:gap-6">
+          <div className="max-w-3xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Ready to move early?</p>
+            <h3 className="mt-3 text-3xl font-bold text-foreground">Start with the waitlist now, then open your school workspace when you are ready.</h3>
+            <p className="mt-3 text-sm leading-7 text-muted-foreground">
+              Smart Class is built for schools that want structure, clarity, and smoother daily operations without the usual system clutter.
+            </p>
+          </div>
+          <div className="mt-6 flex flex-wrap gap-3 lg:mt-0">
+            <Button onClick={onSignup}>
+              Create account
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+            <Button variant="secondary" onClick={onLogin}>
+              Open login
+            </Button>
+          </div>
+        </section>
+
+        <section className="mt-6 rounded-[2rem] border border-border/60 bg-card/70 px-5 py-4 shadow-sm backdrop-blur">
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+              <Mail className="h-4 w-4 text-primary" />
+              hello@smartclass.app
+            </div>
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+              <Phone className="h-4 w-4 text-primary" />
+              Early onboarding support available
+            </div>
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+              <Shield className="h-4 w-4 text-primary" />
+              Multi-tenant and role-based from the start
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );
@@ -13030,7 +13210,7 @@ export default function SmartClassLiveApp() {
 
   if (!session) {
     if (pathname === "/") {
-      return <LandingPage onLogin={() => navigateTo("/login")} onSignup={() => navigateTo("/signup")} />;
+      return <LandingPage onLogin={() => navigateTo("/login")} onSignup={() => navigateTo("/signup")} onNotify={notify} />;
     }
 
     return (
