@@ -22,10 +22,12 @@ import {
   Settings,
   Shield,
   Sparkles,
+  User,
   UserPlus,
   Users,
 } from "lucide-react";
 import { hasSupabaseEnv, supabase, supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
+import smartClassLogo from "@/IMG-20260716-WA0004.jpg";
 
 type UserRole = "super_admin" | "school_admin" | "teacher" | "student" | "parent";
 type AuthMode = "signin" | "signup";
@@ -361,6 +363,7 @@ type AttendanceRecord = {
   student_id: string;
   status: string;
   recorded_at: string;
+  recorded_by?: string;
 };
 
 type NotificationRow = {
@@ -457,6 +460,7 @@ type StudentSummary = {
   name: string;
   email: string | null;
   className: string;
+  classId: string | null;
 };
 
 type ChildSummary = {
@@ -510,10 +514,13 @@ type TeacherData = {
   assignments: TeacherAssignment[];
   classes: ClassRecord[];
   subjects: SubjectRecord[];
+  workingDays: WorkingDay[];
+  timeSlots: TimeSlot[];
   students: StudentSummary[];
   lessons: Lesson[];
   homework: HomeworkBundle[];
   tests: TestBundle[];
+  attendance: AttendanceRecord[];
   timetable: TimetableEntry[];
   announcements: AnnouncementBundle[];
   messages: MessageBundle[];
@@ -548,6 +555,8 @@ type ParentData = {
   enrollments: ClassEnrollment[];
   classes: ClassRecord[];
   subjects: SubjectRecord[];
+  workingDays: WorkingDay[];
+  timeSlots: TimeSlot[];
   lessons: Lesson[];
   homework: HomeworkBundle[];
   tests: TestBundle[];
@@ -585,10 +594,12 @@ const NAV_BY_ROLE: Record<UserRole, NavItem[]> = {
     { id: "schools", label: "Schools", icon: <GraduationCap className="w-4 h-4" /> },
     { id: "analytics", label: "Analytics", icon: <ClipboardList className="w-4 h-4" /> },
     { id: "subscriptions", label: "Subscriptions", icon: <Layers className="w-4 h-4" /> },
+    { id: "profile", label: "My Profile", icon: <User className="w-4 h-4" /> },
     { id: "settings", label: "Settings", icon: <Settings className="w-4 h-4" /> },
   ],
   school_admin: [
     { id: "dashboard", label: "Dashboard", icon: <Home className="w-4 h-4" /> },
+    { id: "profile", label: "My Profile", icon: <User className="w-4 h-4" /> },
     { id: "settings", label: "School Settings", icon: <Settings className="w-4 h-4" /> },
     { id: "academic", label: "Academic Setup", icon: <Layers className="w-4 h-4" /> },
     { id: "teachers", label: "Teachers", icon: <Users className="w-4 h-4" /> },
@@ -605,9 +616,11 @@ const NAV_BY_ROLE: Record<UserRole, NavItem[]> = {
     { id: "tests", label: "Monthly Test", icon: <CheckSquare className="w-4 h-4" /> },
     { id: "grades", label: "Final Results", icon: <GraduationCap className="w-4 h-4" /> },
     { id: "students", label: "My Students", icon: <Users className="w-4 h-4" /> },
+    { id: "attendance", label: "Attendance", icon: <Calendar className="w-4 h-4" /> },
     { id: "messages", label: "Ticketing System", icon: <Mail className="w-4 h-4" /> },
     { id: "timetable", label: "Time Table", icon: <Calendar className="w-4 h-4" /> },
     { id: "announcements", label: "Announcements", icon: <Megaphone className="w-4 h-4" /> },
+    { id: "profile", label: "My Profile", icon: <User className="w-4 h-4" /> },
   ],
   student: [
     { id: "dashboard", label: "Dashboard", icon: <Home className="w-4 h-4" /> },
@@ -619,6 +632,7 @@ const NAV_BY_ROLE: Record<UserRole, NavItem[]> = {
     { id: "timetable", label: "Timetable", icon: <Calendar className="w-4 h-4" /> },
     { id: "announcements", label: "Announcements", icon: <Megaphone className="w-4 h-4" /> },
     { id: "messages", label: "Messages", icon: <Mail className="w-4 h-4" /> },
+    { id: "profile", label: "My Profile", icon: <User className="w-4 h-4" /> },
   ],
   parent: [
     { id: "dashboard", label: "Overview", icon: <Home className="w-4 h-4" /> },
@@ -630,6 +644,7 @@ const NAV_BY_ROLE: Record<UserRole, NavItem[]> = {
     { id: "timetable", label: "Timetable", icon: <Calendar className="w-4 h-4" /> },
     { id: "announcements", label: "Announcements", icon: <Megaphone className="w-4 h-4" /> },
     { id: "messages", label: "Messages", icon: <Mail className="w-4 h-4" /> },
+    { id: "profile", label: "My Profile", icon: <User className="w-4 h-4" /> },
   ],
 };
 
@@ -734,6 +749,12 @@ function formatDateTime(value?: string | null) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function formatTimeRange(start?: string | null, end?: string | null, fallback?: string | null) {
+  if (fallback) return fallback;
+  if (!start && !end) return "Time";
+  return [start, end].filter(Boolean).join(" - ");
 }
 
 function currencyFromCents(amount: number) {
@@ -1538,6 +1559,8 @@ async function loadTeacherData(schoolId: string, currentUserId: string) {
     assignments,
     classes,
     subjects,
+    workingDays,
+    timeSlots,
     enrollments,
     lessons,
     homework,
@@ -1560,6 +1583,8 @@ async function loadTeacherData(schoolId: string, currentUserId: string) {
       .select("id,school_id,academic_year_id,grade_level_id,name,created_at")
       .eq("school_id", schoolId),
     supabase.from("subjects").select("id,school_id,name,code").eq("school_id", schoolId),
+    supabase.from("working_days").select("id,school_id,day_of_week,label").eq("school_id", schoolId),
+    supabase.from("time_slots").select("id,school_id,label,start_time,end_time,sort_order").eq("school_id", schoolId),
     supabase
       .from("class_enrollments")
       .select("id,school_id,class_id,student_id,status,enrolled_at")
@@ -1603,6 +1628,7 @@ async function loadTeacherData(schoolId: string, currentUserId: string) {
   const homeworkIds = homeworkRows.map((item) => item.id);
   const testRows = (unwrap(tests) as unknown) as MonthlyTest[];
   const testIds = testRows.map((item) => item.id);
+  const lessonIds = lessonRows.map((item) => item.id);
   const assignedClassIds = unique(assignmentRows.map((row) => row.class_id).filter(Boolean) as string[]);
 
   const [
@@ -1614,6 +1640,7 @@ async function loadTeacherData(schoolId: string, currentUserId: string) {
     testChoices,
     testSubmissions,
     testAnswers,
+    attendance,
     teacherProfiles,
   ] = await Promise.all([
     homeworkIds.length
@@ -1706,6 +1733,13 @@ async function loadTeacherData(schoolId: string, currentUserId: string) {
             ),
           )
       : Promise.resolve({ data: [] as TestAnswer[], error: null }),
+    lessonIds.length
+      ? supabase
+          .from("attendance_records")
+          .select("id,school_id,lesson_id,student_id,status,recorded_at,recorded_by")
+          .in("lesson_id", lessonIds)
+          .order("recorded_at", { ascending: false })
+      : Promise.resolve({ data: [] as AttendanceRecord[], error: null }),
     fetchProfilesByIds(
       unique([
         ...((unwrap(enrollments) as unknown) as ClassEnrollment[])
@@ -1747,6 +1781,7 @@ async function loadTeacherData(schoolId: string, currentUserId: string) {
       name: fullName(profileMap[row.student_id]),
       email: profileMap[row.student_id]?.email ?? null,
       className: classMap[row.class_id]?.name ?? "Unknown class",
+      classId: row.class_id,
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -1768,10 +1803,13 @@ async function loadTeacherData(schoolId: string, currentUserId: string) {
     assignments: assignmentRows,
     classes: classRows,
     subjects: subjectRows,
+    workingDays: (unwrap(workingDays) as unknown) as WorkingDay[],
+    timeSlots: (unwrap(timeSlots) as unknown) as TimeSlot[],
     students: studentRows,
     lessons: lessonRows,
     homework: homeworkBundles,
     tests: testBundles,
+    attendance: (unwrap(attendance) as unknown) as AttendanceRecord[],
     timetable: (unwrap(timetable) as unknown) as TimetableEntry[],
     announcements: bundleAnnouncements(announcements, targets, profileMap, classMap),
     messages: bundleMessages(messages, recipients, profileMap),
@@ -2003,7 +2041,7 @@ async function loadStudentData(schoolId: string, currentUserId: string) {
 }
 
 async function loadParentData(schoolId: string, currentUserId: string) {
-  const [school, links, enrollments, classes, subjects, lessons, homework, tests, grades, attendance, timetable, assignments] =
+  const [school, links, enrollments, classes, subjects, workingDays, timeSlots, lessons, homework, tests, grades, attendance, timetable, assignments] =
     await Promise.all([
       supabase
         .from("schools")
@@ -2024,6 +2062,8 @@ async function loadParentData(schoolId: string, currentUserId: string) {
         .select("id,school_id,academic_year_id,grade_level_id,name,created_at")
         .eq("school_id", schoolId),
       supabase.from("subjects").select("id,school_id,name,code").eq("school_id", schoolId),
+      supabase.from("working_days").select("id,school_id,day_of_week,label").eq("school_id", schoolId),
+      supabase.from("time_slots").select("id,school_id,label,start_time,end_time,sort_order").eq("school_id", schoolId),
       supabase
         .from("lessons")
         .select("id,school_id,class_id,subject_id,teacher_id,title,description,video_url,lesson_date,created_at")
@@ -2202,6 +2242,8 @@ async function loadParentData(schoolId: string, currentUserId: string) {
     enrollments: ((unwrap(enrollments) as unknown) as ClassEnrollment[]).filter((row) => childIds.includes(row.student_id)),
     classes: classRows,
     subjects: (unwrap(subjects) as unknown) as SubjectRecord[],
+    workingDays: (unwrap(workingDays) as unknown) as WorkingDay[],
+    timeSlots: (unwrap(timeSlots) as unknown) as TimeSlot[],
     lessons: ((unwrap(lessons) as unknown) as Lesson[]).filter((lesson) =>
       ((unwrap(enrollments) as unknown) as ClassEnrollment[]).some(
         (enrollment) => childIds.includes(enrollment.student_id) && enrollment.class_id === lesson.class_id,
@@ -2920,6 +2962,234 @@ function Flash({ flash }: { flash: FlashState }) {
   );
 }
 
+function ProfileWorkspace({
+  workspace,
+  profile,
+  onNotify,
+  onProfileSaved,
+}: {
+  workspace: Workspace;
+  profile: BasicProfile;
+  onNotify: (kind: "success" | "error" | "info", message: string) => void;
+  onProfileSaved: (profile: BasicProfile) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({
+    first_name: profile.first_name ?? "",
+    last_name: profile.last_name ?? "",
+    phone: profile.phone ?? "",
+    avatar_url: profile.avatar_url ?? "",
+  });
+  const [passwordForm, setPasswordForm] = useState({
+    password: "",
+    confirmPassword: "",
+  });
+
+  useEffect(() => {
+    setForm({
+      first_name: profile.first_name ?? "",
+      last_name: profile.last_name ?? "",
+      phone: profile.phone ?? "",
+      avatar_url: profile.avatar_url ?? "",
+    });
+  }, [profile.avatar_url, profile.first_name, profile.id, profile.last_name, profile.phone]);
+
+  const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (passwordForm.password && passwordForm.password.length < 6) {
+      onNotify("error", "Use at least 6 characters for the new password.");
+      return;
+    }
+
+    if (passwordForm.password && passwordForm.password !== passwordForm.confirmPassword) {
+      onNotify("error", "The password confirmation does not match.");
+      return;
+    }
+
+    try {
+      setBusy(true);
+      const updatedProfile = (unwrap(
+        await supabase
+          .from("profiles")
+          .update({
+            first_name: form.first_name.trim() || null,
+            last_name: form.last_name.trim() || null,
+            phone: form.phone.trim() || null,
+            avatar_url: form.avatar_url.trim() || null,
+          })
+          .eq("id", profile.id)
+          .select("id,email,first_name,last_name,phone,avatar_url")
+          .single(),
+      ) as unknown) as BasicProfile;
+
+      const { error } = await supabase.auth.updateUser({
+        ...(passwordForm.password ? { password: passwordForm.password } : {}),
+        data: {
+          first_name: updatedProfile.first_name,
+          last_name: updatedProfile.last_name,
+        },
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      onProfileSaved(updatedProfile);
+      setPasswordForm({
+        password: "",
+        confirmPassword: "",
+      });
+      onNotify("success", passwordForm.password ? "Profile and password updated." : "Profile updated.");
+    } catch (error) {
+      onNotify("error", error instanceof Error ? error.message : "Could not update your profile.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <SectionTrail
+        items={[ROLE_LABELS[workspace.role], "My Profile"]}
+        description="Update your personal details, contact information, photo, and sign-in settings."
+      />
+      <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+        <Panel title="Personal Details" description="These details show up across your workspace and school records.">
+          <form className="space-y-5" onSubmit={saveProfile}>
+            <div className="grid gap-5 lg:grid-cols-[200px_minmax(0,1fr)]">
+              <div className="rounded-[1.8rem] border border-border bg-muted/20 p-4">
+                <div className="flex flex-col items-center text-center">
+                  {form.avatar_url ? (
+                    <img
+                      src={form.avatar_url}
+                      alt={fullName(profile)}
+                      className="h-28 w-28 rounded-[1.75rem] object-cover shadow-[0_14px_34px_rgba(15,23,42,0.12)]"
+                    />
+                  ) : (
+                    <div
+                      className={`flex h-28 w-28 items-center justify-center rounded-[1.75rem] text-3xl font-bold shadow-sm ${avatarTone(
+                        profile.id,
+                      )}`}
+                    >
+                      {initialsFor(fullName(profile))}
+                    </div>
+                  )}
+                  <p className="mt-4 text-sm font-semibold text-foreground">{fullName(profile)}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{ROLE_LABELS[workspace.role]}</p>
+                </div>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="First name">
+                  <Input value={form.first_name} onChange={(event) => setForm((prev) => ({ ...prev, first_name: event.target.value }))} />
+                </Field>
+                <Field label="Last name">
+                  <Input value={form.last_name} onChange={(event) => setForm((prev) => ({ ...prev, last_name: event.target.value }))} />
+                </Field>
+                <Field label="Email">
+                  <Input value={profile.email ?? ""} readOnly />
+                </Field>
+                <Field label="Phone">
+                  <Input value={form.phone} onChange={(event) => setForm((prev) => ({ ...prev, phone: event.target.value }))} />
+                </Field>
+                <div className="sm:col-span-2">
+                  <Field label="Avatar image URL">
+                    <Input
+                      value={form.avatar_url}
+                      placeholder="https://..."
+                      onChange={(event) => setForm((prev) => ({ ...prev, avatar_url: event.target.value }))}
+                    />
+                  </Field>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-[1.6rem] border border-border bg-muted/15 p-4">
+              <p className="text-sm font-semibold text-foreground">Password</p>
+              <p className="mt-1 text-sm text-muted-foreground">Leave these fields empty if you only want to save profile details.</p>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <Field label="New password">
+                  <Input
+                    type="password"
+                    value={passwordForm.password}
+                    onChange={(event) => setPasswordForm((prev) => ({ ...prev, password: event.target.value }))}
+                  />
+                </Field>
+                <Field label="Confirm password">
+                  <Input
+                    type="password"
+                    value={passwordForm.confirmPassword}
+                    onChange={(event) => setPasswordForm((prev) => ({ ...prev, confirmPassword: event.target.value }))}
+                  />
+                </Field>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <Button type="submit" disabled={busy}>
+                {busy ? "Saving..." : "Save profile"}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setForm({
+                    first_name: profile.first_name ?? "",
+                    last_name: profile.last_name ?? "",
+                    phone: profile.phone ?? "",
+                    avatar_url: profile.avatar_url ?? "",
+                  });
+                  setPasswordForm({
+                    password: "",
+                    confirmPassword: "",
+                  });
+                }}
+                disabled={busy}
+              >
+                Reset
+              </Button>
+            </div>
+          </form>
+        </Panel>
+
+        <div className="space-y-6">
+          <Panel title="Account Summary" description="A quick snapshot of the workspace you are using right now.">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="rounded-2xl bg-muted/25 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Current role</p>
+                <p className="mt-2 text-lg font-bold text-foreground">{ROLE_LABELS[workspace.role]}</p>
+              </div>
+              <div className="rounded-2xl bg-muted/25 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Workspace</p>
+                <p className="mt-2 text-lg font-bold text-foreground">{workspace.schoolName}</p>
+              </div>
+              <div className="rounded-2xl bg-muted/25 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Timezone</p>
+                <p className="mt-2 text-lg font-bold text-foreground">{workspace.school?.timezone ?? "Platform"}</p>
+              </div>
+              <div className="rounded-2xl bg-muted/25 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">School status</p>
+                <p className="mt-2 text-lg font-bold text-foreground">
+                  {workspace.school ? (workspace.school.is_active ? "Active" : "Inactive") : "Platform"}
+                </p>
+              </div>
+            </div>
+          </Panel>
+
+          <Panel title="Profile Tips" description="A few details here make the daily experience smoother across every role.">
+            <div className="space-y-3 text-sm text-muted-foreground">
+              <div className="rounded-2xl bg-muted/25 p-4">Add a phone number so the school can reach you more easily when needed.</div>
+              <div className="rounded-2xl bg-muted/25 p-4">Use an avatar image URL if you want your account to feel more personal in messages and dashboards.</div>
+              <div className="rounded-2xl bg-muted/25 p-4">You can change your password here without leaving the current workspace.</div>
+            </div>
+          </Panel>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WorkspaceShell({
   navItems,
   activeView,
@@ -2969,9 +3239,18 @@ function WorkspaceShell({
             }`}
           >
             <div className="rounded-[1.5rem] bg-secondary p-4 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Smart Class</p>
-              <h1 className="mt-2 text-2xl font-bold">{workspace.schoolName}</h1>
-              <p className="mt-1 text-sm text-muted-foreground">{ROLE_LABELS[workspace.role]}</p>
+              <div className="flex items-center gap-4">
+                <img
+                  src={smartClassLogo}
+                  alt="Smart Class"
+                  className="h-16 w-16 rounded-[1.35rem] object-cover shadow-[0_14px_30px_rgba(15,23,42,0.14)]"
+                />
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Smart Class</p>
+                  <h1 className="mt-2 text-2xl font-bold">{workspace.schoolName}</h1>
+                  <p className="mt-1 text-sm text-muted-foreground">{ROLE_LABELS[workspace.role]}</p>
+                </div>
+              </div>
             </div>
 
             <nav className="mt-6 flex-1 space-y-1 overflow-y-auto pr-1">
@@ -3103,9 +3382,16 @@ function LandingPage({
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.16),_transparent_30%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.14),_transparent_28%)]" />
       <div className="relative mx-auto flex min-h-screen max-w-7xl flex-col px-4 py-6">
         <header className="flex items-center justify-between rounded-[2rem] border border-border/70 bg-card/85 px-5 py-4 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur transition-all duration-500 hover:-translate-y-0.5 hover:shadow-[0_26px_75px_rgba(15,23,42,0.12)]">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Smart Class</p>
-            <h1 className="mt-1 text-xl font-bold">Connected school management</h1>
+          <div className="flex items-center gap-4">
+            <img
+              src={smartClassLogo}
+              alt="Smart Class"
+              className="h-14 w-14 rounded-[1.25rem] object-cover shadow-[0_14px_34px_rgba(15,23,42,0.14)]"
+            />
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Smart Class</p>
+              <h1 className="mt-1 text-xl font-bold">Connected school management</h1>
+            </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={onLogin}>
@@ -3118,6 +3404,17 @@ function LandingPage({
         <div className="mt-6 grid flex-1 gap-6 lg:grid-cols-[1.15fr_0.85fr]">
           <section className="rounded-[2.25rem] border border-border/70 bg-card/92 p-8 shadow-[0_26px_90px_rgba(15,23,42,0.08)] backdrop-blur transition-all duration-500 hover:-translate-y-1 hover:shadow-[0_34px_100px_rgba(15,23,42,0.12)]">
             <Badge>Simple landing page</Badge>
+            <div className="mt-6 flex items-center gap-5">
+              <img
+                src={smartClassLogo}
+                alt="Smart Class"
+                className="h-20 w-20 rounded-[1.75rem] object-cover shadow-[0_20px_40px_rgba(15,23,42,0.14)]"
+              />
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Smart Class</p>
+                <p className="mt-2 text-sm text-muted-foreground">A cleaner front door for the full multi-tenant school platform.</p>
+              </div>
+            </div>
             <h2 className="mt-5 max-w-4xl text-5xl font-bold leading-[1.04] tracking-tight">
               One place for schools, teachers, students, parents, and platform admins.
             </h2>
@@ -3279,7 +3576,14 @@ function AuthScreen({
       <div className="relative mx-auto grid w-full max-w-5xl gap-6 lg:grid-cols-[1.08fr_0.92fr]">
         <div className="rounded-[2rem] border border-border bg-card/95 p-8 shadow-[0_30px_80px_rgba(28,27,58,0.08)] backdrop-blur transition-all duration-500 hover:-translate-y-1 hover:shadow-[0_38px_90px_rgba(28,27,58,0.12)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <Badge>Smart Class</Badge>
+            <div className="flex items-center gap-3">
+              <img
+                src={smartClassLogo}
+                alt="Smart Class"
+                className="h-12 w-12 rounded-[1rem] object-cover shadow-[0_10px_24px_rgba(15,23,42,0.12)]"
+              />
+              <Badge>Smart Class</Badge>
+            </div>
             <Button variant="ghost" onClick={onBackHome}>
               Back to home
             </Button>
@@ -7019,6 +7323,136 @@ function SchoolAdminPortal({
     );
   }
 
+  if (view === "attendance") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["Teacher", "Attendance"]}
+          description="Record one lesson at a time so each class register stays accurate and easy to review."
+          action={
+            selectedAttendanceLesson ? (
+              <Badge>
+                {classMap[selectedAttendanceLesson.class_id]?.name ?? "Class"} / {subjectMap[selectedAttendanceLesson.subject_id]?.name ?? "Subject"}
+              </Badge>
+            ) : null
+          }
+        />
+        <div className="grid gap-4 md:grid-cols-4">
+          <StatCard label="Present" value={attendanceSummary.present} />
+          <StatCard label="Absent" value={attendanceSummary.absent} />
+          <StatCard label="Late" value={attendanceSummary.late} />
+          <StatCard label="Excused" value={attendanceSummary.excused} />
+        </div>
+        <Panel title="Lesson Register" description="Pick a lesson, then save the attendance statuses for that lesson only.">
+          <form className="space-y-5" onSubmit={saveAttendance}>
+            <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr_0.85fr]">
+              <Field label="Lesson">
+                <Select value={attendanceLessonId} onChange={(event) => setAttendanceLessonId(event.target.value)}>
+                  {data.lessons
+                    .slice()
+                    .sort((a, b) => new Date(b.lesson_date).getTime() - new Date(a.lesson_date).getTime())
+                    .map((lesson) => (
+                      <option key={lesson.id} value={lesson.id}>
+                        {lesson.title} / {classMap[lesson.class_id]?.name ?? "Class"} / {formatDate(lesson.lesson_date)}
+                      </option>
+                    ))}
+                </Select>
+              </Field>
+              <Field label="Class">
+                <Input value={selectedAttendanceLesson ? classMap[selectedAttendanceLesson.class_id]?.name ?? "Class" : ""} readOnly />
+              </Field>
+              <Field label="Subject">
+                <Input value={selectedAttendanceLesson ? subjectMap[selectedAttendanceLesson.subject_id]?.name ?? "Subject" : ""} readOnly />
+              </Field>
+            </div>
+
+            {!selectedAttendanceLesson ? (
+              <EmptyState message="Create a lesson first so attendance can be tied to a real class session." />
+            ) : attendanceStudents.length === 0 ? (
+              <EmptyState message="No enrolled students are linked to this lesson's class yet." />
+            ) : (
+              <div className="space-y-4">
+                <div className="rounded-[1.6rem] bg-muted/20 p-4">
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div className="rounded-2xl bg-card px-4 py-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Lesson date</p>
+                      <p className="mt-2 font-bold text-foreground">{formatDate(selectedAttendanceLesson.lesson_date)}</p>
+                    </div>
+                    <div className="rounded-2xl bg-card px-4 py-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Students</p>
+                      <p className="mt-2 font-bold text-foreground">{attendanceStudents.length}</p>
+                    </div>
+                    <div className="rounded-2xl bg-card px-4 py-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Last saved</p>
+                      <p className="mt-2 font-bold text-foreground">
+                        {attendanceRecordsForLesson[0]?.recorded_at ? formatDateTime(attendanceRecordsForLesson[0].recorded_at) : "Not saved yet"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {attendanceStudents.map((student) => (
+                    <div key={student.userId} className="grid gap-4 rounded-2xl border border-border bg-muted/20 p-4 lg:grid-cols-[1.1fr_0.8fr_0.7fr] lg:items-center">
+                      <div>
+                        <p className="font-semibold text-foreground">{student.name}</p>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {student.email || "No email yet"} / {student.className}
+                        </p>
+                      </div>
+                      <div>
+                        <Select
+                          value={attendanceDraft[student.userId] ?? "present"}
+                          onChange={(event) =>
+                            setAttendanceDraft((prev) => ({
+                              ...prev,
+                              [student.userId]: event.target.value,
+                            }))
+                          }
+                        >
+                          <option value="present">Present</option>
+                          <option value="absent">Absent</option>
+                          <option value="late">Late</option>
+                          <option value="excused">Excused</option>
+                        </Select>
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {attendanceRecordMap[student.userId]?.recorded_at
+                          ? `Updated ${formatDateTime(attendanceRecordMap[student.userId].recorded_at)}`
+                          : "New record"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex flex-wrap gap-3">
+                  <Button type="submit" disabled={busy}>
+                    {busy ? "Saving..." : "Save attendance"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() =>
+                      setAttendanceDraft(
+                        attendanceStudents.reduce<Record<string, string>>((acc, student) => {
+                          acc[student.userId] = attendanceRecordMap[student.userId]?.status ?? "present";
+                          return acc;
+                        }, {}),
+                      )
+                    }
+                    disabled={busy}
+                  >
+                    Reset lesson
+                  </Button>
+                </div>
+              </div>
+            )}
+          </form>
+        </Panel>
+      </div>
+    );
+  }
+
   if (view === "students") {
     return (
       <div className="space-y-6">
@@ -7088,6 +7522,90 @@ function SchoolAdminPortal({
               </button>
             ))}
           </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (view === "timetable") {
+    return (
+      <div className="space-y-6">
+        <SectionTrail
+          items={["Teacher", "Time Table"]}
+          description="Review your week as Subject / Class / Time so scheduling stays clear and easy to follow."
+        />
+        <div className="grid gap-4 md:grid-cols-3">
+          <StatCard label="Working Days" value={scheduleDays.length} />
+          <StatCard label="Time Slots" value={scheduleSlots.length} />
+          <StatCard label="Scheduled Entries" value={data.timetable.length} />
+        </div>
+        <Panel title="Weekly Timetable" description="Each cell shows the subject and class you teach in that slot.">
+          {scheduleDays.length === 0 || scheduleSlots.length === 0 ? (
+            <EmptyState message="Working days and time slots need to be set up before the full timetable can be shown." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-border text-sm">
+                <thead>
+                  <tr className="text-left text-muted-foreground">
+                    <th className="px-4 py-3 font-semibold">Time</th>
+                    {scheduleDays.map((day) => (
+                      <th key={day.id} className="px-4 py-3 font-semibold">
+                        {day.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {scheduleSlots.map((slot) => (
+                    <tr key={slot.id}>
+                      <td className="px-4 py-4 font-semibold text-foreground">
+                        {formatTimeRange(slot.start_time, slot.end_time, slot.label)}
+                      </td>
+                      {scheduleDays.map((day) => {
+                        const entry = timetableLookup[`${day.id}:${slot.id}`];
+                        return (
+                          <td key={`${day.id}-${slot.id}`} className="px-4 py-4 align-top">
+                            {entry ? (
+                              <div className="rounded-2xl bg-secondary/45 px-3 py-3">
+                                <p className="font-semibold text-primary">{subjectMap[entry.subject_id]?.name ?? "Subject"}</p>
+                                <p className="mt-1 text-xs text-muted-foreground">{classMap[entry.class_id]?.name ?? "Class"}</p>
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+        <Panel title="Schedule List" description="A compact fallback view of the same timetable for quick scanning.">
+          {sortedTimetableEntries.length === 0 ? (
+            <EmptyState message="No timetable entries for this teacher yet." />
+          ) : (
+            <div className="space-y-3">
+              {sortedTimetableEntries.map((entry) => (
+                <div key={entry.id} className="rounded-2xl bg-muted/25 p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge>{workingDayMap[entry.working_day_id]?.label ?? "Day"}</Badge>
+                    <Badge>
+                      {formatTimeRange(
+                        timeSlotMap[entry.time_slot_id]?.start_time,
+                        timeSlotMap[entry.time_slot_id]?.end_time,
+                        timeSlotMap[entry.time_slot_id]?.label ?? null,
+                      )}
+                    </Badge>
+                  </div>
+                  <p className="mt-3 font-semibold text-foreground">{subjectMap[entry.subject_id]?.name ?? "Subject"}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{classMap[entry.class_id]?.name ?? "Class"}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </Panel>
       </div>
     );
@@ -9276,6 +9794,8 @@ function TeacherPortal({
   const [activeStudentId, setActiveStudentId] = useState<string | null>(null);
   const [activeAnnouncementId, setActiveAnnouncementId] = useState<string | null>(null);
   const [activeGradeId, setActiveGradeId] = useState<string | null>(null);
+  const [attendanceLessonId, setAttendanceLessonId] = useState<string>(data.lessons[0]?.id ?? "");
+  const [attendanceDraft, setAttendanceDraft] = useState<Record<string, string>>({});
   const [lessonForm, setLessonForm] = useState({
     title: "",
     class_id: data.assignments.find((item) => item.class_id)?.class_id ?? data.classes[0]?.id ?? "",
@@ -9329,6 +9849,8 @@ function TeacherPortal({
   const classMap = byId(data.classes);
   const subjectMap = byId(data.subjects);
   const lessonMap = byId(data.lessons);
+  const workingDayMap = byId(data.workingDays);
+  const timeSlotMap = byId(data.timeSlots);
   const studentMap = data.students.reduce<Record<string, StudentSummary>>((acc, student) => {
     acc[student.userId] = student;
     return acc;
@@ -9378,6 +9900,57 @@ function TeacherPortal({
     ? data.announcements.find((announcement) => announcement.item.id === activeAnnouncementId) ?? null
     : null;
   const selectedGrade = activeGradeId ? data.grades.find((grade) => grade.id === activeGradeId) ?? null : null;
+  const selectedAttendanceLesson = data.lessons.find((lesson) => lesson.id === attendanceLessonId) ?? data.lessons[0] ?? null;
+  const attendanceStudents = selectedAttendanceLesson
+    ? data.students.filter((student) => student.classId === selectedAttendanceLesson.class_id)
+    : [];
+  const attendanceRecordsForLesson = selectedAttendanceLesson
+    ? data.attendance.filter((row) => row.lesson_id === selectedAttendanceLesson.id)
+    : [];
+  const attendanceRecordMap = attendanceRecordsForLesson.reduce<Record<string, AttendanceRecord>>((acc, row) => {
+    acc[row.student_id] = row;
+    return acc;
+  }, {});
+  const attendanceSummary = {
+    present: Object.values(attendanceDraft).filter((value) => value === "present").length,
+    absent: Object.values(attendanceDraft).filter((value) => value === "absent").length,
+    late: Object.values(attendanceDraft).filter((value) => value === "late").length,
+    excused: Object.values(attendanceDraft).filter((value) => value === "excused").length,
+  };
+  const scheduleDays = [...data.workingDays].sort((a, b) => a.day_of_week - b.day_of_week);
+  const scheduleSlots = [...data.timeSlots].sort(
+    (a, b) => a.sort_order - b.sort_order || a.start_time.localeCompare(b.start_time),
+  );
+  const timetableLookup = data.timetable.reduce<Record<string, TimetableEntry>>((acc, entry) => {
+    acc[`${entry.working_day_id}:${entry.time_slot_id}`] = entry;
+    return acc;
+  }, {});
+  const teacherNameMap = data.recipientOptions.reduce<Record<string, string>>((acc, recipient) => {
+    acc[recipient.id] = recipient.label.split(" · ")[0] ?? recipient.label;
+    return acc;
+  }, {});
+  const sortedTimetableEntries = [...data.timetable].sort((a, b) => {
+    const dayDelta =
+      (workingDayMap[a.working_day_id]?.day_of_week ?? 0) - (workingDayMap[b.working_day_id]?.day_of_week ?? 0);
+    if (dayDelta !== 0) return dayDelta;
+    const slotDelta = (timeSlotMap[a.time_slot_id]?.sort_order ?? 0) - (timeSlotMap[b.time_slot_id]?.sort_order ?? 0);
+    if (slotDelta !== 0) return slotDelta;
+    return (classMap[a.class_id]?.name ?? "").localeCompare(classMap[b.class_id]?.name ?? "");
+  });
+
+  useEffect(() => {
+    if (!selectedAttendanceLesson) {
+      setAttendanceDraft({});
+      return;
+    }
+
+    setAttendanceDraft(
+      attendanceStudents.reduce<Record<string, string>>((acc, student) => {
+        acc[student.userId] = attendanceRecordMap[student.userId]?.status ?? "present";
+        return acc;
+      }, {}),
+    );
+  }, [selectedAttendanceLesson?.id, attendanceStudents.length, data.attendance]);
 
   const runAction = async (work: () => Promise<void>, successMessage: string) => {
     try {
@@ -9592,6 +10165,35 @@ function TeacherPortal({
         body: "",
       });
     }, "Message sent.");
+  };
+
+  const saveAttendance = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedAttendanceLesson) {
+      onNotify("error", "Choose a lesson before saving attendance.");
+      return;
+    }
+
+    if (!attendanceStudents.length) {
+      onNotify("error", "This lesson does not have enrolled students yet.");
+      return;
+    }
+
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("attendance_records").upsert(
+          attendanceStudents.map((student) => ({
+            school_id: data.school.id,
+            lesson_id: selectedAttendanceLesson.id,
+            student_id: student.userId,
+            status: attendanceDraft[student.userId] ?? "present",
+            recorded_by: profile.id,
+            recorded_at: new Date().toISOString(),
+          })),
+          { onConflict: "lesson_id,student_id" },
+        ),
+      );
+    }, "Attendance saved.");
   };
 
   const classPopup = selectedClass ? (
@@ -11660,6 +12262,7 @@ function StudentPortal({
                             {entry ? (
                               <div className="rounded-2xl bg-secondary/45 px-3 py-2">
                                 <p className="font-semibold text-primary">{subjectMap[entry.subject_id]?.name ?? "Subject"}</p>
+                                <p className="mt-1 text-xs text-muted-foreground">{teacherNameMap[entry.teacher_id] ?? "Teacher"}</p>
                               </div>
                             ) : (
                               <span className="text-muted-foreground">-</span>
@@ -11892,6 +12495,19 @@ function ParentPortal({
   }));
   const childGrades = data.grades.filter((grade) => grade.student_id === selectedChildId);
   const childAttendance = data.attendance.filter((row) => row.student_id === selectedChildId);
+  const teacherNameMap = data.recipientOptions.reduce<Record<string, string>>((acc, recipient) => {
+    acc[recipient.id] = recipient.label.split(" · ")[0] ?? recipient.label;
+    return acc;
+  }, {});
+  const scheduleDays = [...data.workingDays].sort((a, b) => a.day_of_week - b.day_of_week);
+  const scheduleSlots = [...data.timeSlots].sort(
+    (a, b) => a.sort_order - b.sort_order || a.start_time.localeCompare(b.start_time),
+  );
+  const childTimetable = data.timetable.filter((entry) => !selectedEnrollment || entry.class_id === selectedEnrollment.class_id);
+  const timetableLookup = childTimetable.reduce<Record<string, TimetableEntry>>((acc, entry) => {
+    acc[`${entry.working_day_id}:${entry.time_slot_id}`] = entry;
+    return acc;
+  }, {});
 
   const runAction = async (work: () => Promise<void>, successMessage: string) => {
     try {
@@ -12004,19 +12620,67 @@ function ParentPortal({
 
   if (view === "timetable") {
     return (
-      <Panel title={`Timetable${selectedChild ? ` · ${selectedChild.name}` : ""}`}>
-        <div className="space-y-3">
-          {data.timetable
-            .filter((entry) => !selectedEnrollment || entry.class_id === selectedEnrollment.class_id)
-            .map((entry) => (
-              <div key={entry.id} className="rounded-2xl bg-muted/30 p-4">
-                <p className="font-semibold">
-                  {classMap[entry.class_id]?.name ?? "Class"} · {subjectMap[entry.subject_id]?.name ?? "Subject"}
-                </p>
-              </div>
-            ))}
+      <div className="space-y-6">
+        <SectionTrail
+          items={["Parent", "Timetable"]}
+          description="Review your child's weekly schedule with subject, teacher, and time all in one place."
+        />
+        <div className="flex flex-wrap items-center gap-3">
+          <Field label="Child">
+            <Select value={selectedChildId} onChange={(event) => setSelectedChildId(event.target.value)}>
+              {data.children.map((child) => (
+                <option key={child.userId} value={child.userId}>
+                  {child.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
         </div>
-      </Panel>
+        <Panel title={`Class Timetable${selectedChild ? ` / ${selectedChild.name}` : ""}`} description={selectedChild?.className ?? "Child class"}>
+          {scheduleDays.length === 0 || scheduleSlots.length === 0 ? (
+            <EmptyState message="Timetable details are not ready yet." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-border text-sm">
+                <thead>
+                  <tr className="text-left text-muted-foreground">
+                    <th className="px-4 py-3 font-semibold">Time</th>
+                    {scheduleDays.map((day) => (
+                      <th key={day.id} className="px-4 py-3 font-semibold">
+                        {day.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {scheduleSlots.map((slot) => (
+                    <tr key={slot.id}>
+                      <td className="px-4 py-4 font-semibold text-foreground">
+                        {slot.label || `${slot.start_time} - ${slot.end_time}`}
+                      </td>
+                      {scheduleDays.map((day) => {
+                        const entry = timetableLookup[`${day.id}:${slot.id}`];
+                        return (
+                          <td key={`${day.id}-${slot.id}`} className="px-4 py-4">
+                            {entry ? (
+                              <div className="rounded-2xl bg-secondary/45 px-3 py-2">
+                                <p className="font-semibold text-primary">{subjectMap[entry.subject_id]?.name ?? "Subject"}</p>
+                                <p className="mt-1 text-xs text-muted-foreground">{teacherNameMap[entry.teacher_id] ?? "Teacher"}</p>
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+      </div>
     );
   }
 
@@ -12291,6 +12955,10 @@ export default function SmartClassLiveApp() {
     setFlash({ kind, message });
   };
 
+  const handleProfileSaved = (nextProfile: BasicProfile) => {
+    setProfile(nextProfile);
+  };
+
   const signOut = async () => {
     await supabase.auth.signOut();
     setData(null);
@@ -12413,7 +13081,15 @@ export default function SmartClassLiveApp() {
             <p className="text-sm text-muted-foreground">Loading the latest information for this dashboard...</p>
           </Panel>
         ) : null}
-        {data?.role === "super_admin" ? (
+        {view === "profile" ? (
+          <ProfileWorkspace
+            workspace={selectedWorkspace}
+            profile={profile}
+            onNotify={notify}
+            onProfileSaved={handleProfileSaved}
+          />
+        ) : null}
+        {view !== "profile" && data?.role === "super_admin" ? (
           <SuperAdminPortal
             view={view}
             data={data}
@@ -12431,7 +13107,7 @@ export default function SmartClassLiveApp() {
             }
           />
         ) : null}
-        {data?.role === "school_admin" ? (
+        {view !== "profile" && data?.role === "school_admin" ? (
           <SchoolAdminPortalModern
             view={view}
             data={data}
@@ -12441,13 +13117,13 @@ export default function SmartClassLiveApp() {
             onChangeView={(nextView) => navigateToView(nextView)}
           />
         ) : null}
-        {data?.role === "teacher" ? (
+        {view !== "profile" && data?.role === "teacher" ? (
           <TeacherPortal view={view} data={data} profile={profile} onNotify={notify} onRefresh={refreshWorkspaceData} />
         ) : null}
-        {data?.role === "student" ? (
+        {view !== "profile" && data?.role === "student" ? (
           <StudentPortal view={view} data={data} profile={profile} onNotify={notify} onRefresh={refreshWorkspaceData} />
         ) : null}
-        {data?.role === "parent" ? (
+        {view !== "profile" && data?.role === "parent" ? (
           <ParentPortal view={view} data={data} profile={profile} onNotify={notify} onRefresh={refreshWorkspaceData} />
         ) : null}
       </div>
