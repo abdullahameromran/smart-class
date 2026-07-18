@@ -3,9 +3,12 @@ import { useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import {
   AlertCircle,
+  ArrowRight,
   Bell,
   BookOpen,
+  Building2,
   Calendar,
+  CheckCircle2,
   CheckSquare,
   ClipboardList,
   Download,
@@ -15,6 +18,7 @@ import {
   LogOut,
   Mail,
   Megaphone,
+  Phone,
   Plus,
   RefreshCw,
   Search,
@@ -3340,6 +3344,29 @@ async function sendMessageToRecipient({
       p_body: body.trim(),
     }),
   ) as unknown as Message;
+}
+
+async function joinWaitlist({
+  fullName,
+  email,
+  phone,
+}: {
+  fullName: string;
+  email: string;
+  phone: string;
+}) {
+  return unwrap(
+    await supabase
+      .from("waitlist_signups")
+      .insert({
+        full_name: fullName.trim(),
+        email: email.trim().toLowerCase(),
+        phone: phone.trim(),
+        source: "landing_page",
+      })
+      .select("id")
+      .single(),
+  ) as { id: string };
 }
 
 function slugify(value: string) {
