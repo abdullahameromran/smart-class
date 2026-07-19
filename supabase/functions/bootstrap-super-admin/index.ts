@@ -25,12 +25,17 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   try {
-    const authHeader = req.headers.get("Authorization") ?? "";
-    const callerClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-      global: { headers: { Authorization: authHeader } },
-    });
+    if (req.method !== "GET" && req.method !== "POST") {
+      return json({ error: "Method not allowed" }, 405);
+    }
 
-    const { data: callerData, error: callerErr } = await callerClient.auth.getUser();
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    if (!token) {
+      return json({ error: "Not authenticated" }, 401);
+    }
+
+    const { data: callerData, error: callerErr } = await admin.auth.getUser(token);
     if (callerErr || !callerData?.user) {
       return json({ error: "Not authenticated" }, 401);
     }
@@ -49,37 +54,72 @@ Deno.serve(async (req) => {
     }
 
     const alreadySuperAdmin = (existingSuperAdmins ?? []).some((row) => row.user_id === caller.id);
-    if ((existingSuperAdmins?.length ?? 0) > 0 && !alreadySuperAdmin) {
-      return json({ error: "Project already initialized. Ask an existing admin to invite you." }, 403);
+    const initialized = (existingSuperAdmins?.length ?? 0) > 0;
+    const bootstrapStatus = {
+      initialized,
+      can_bootstrap: !initialized || alreadySuperAdmin,
+      message:
+        initialized && !alreadySuperAdmin
+          ? "Project already initialized. Ask an existing admin to invite you."
+          : "First-time setup is available for this account.",
+    };
+
+    if (req.method === "GET") {
+      return json(bootstrapStatus, 200);
+    }
+
+    if (initialized && !alreadySuperAdmin) {
+      return json({ error: bootstrapStatus.message }, 403);
     }
 
     const body = await req.json().catch(() => ({}));
     const first_name = body?.first_name ?? caller.user_metadata?.first_name ?? null;
     const last_name = body?.last_name ?? caller.user_metadata?.last_name ?? null;
 
-    await admin.from("profiles").upsert({
+    const { error: profileErr } = await admin.from("profiles").upsert({
       id: caller.id,
       email: caller.email ?? "",
       first_name,
       last_name,
       is_active: true,
     });
+    if (profileErr) {
+      return json({ error: profileErr.message }, 400);
+    }
 
-    const { error: roleErr } = await admin.from("user_school_roles").upsert(
-      {
-        user_id: caller.id,
-        school_id: null,
-        role: "super_admin",
-        is_active: true,
-      },
-      { onConflict: "user_id,school_id,role" },
-    );
+    const { data: existingRole, error: existingRoleErr } = await admin
+      .from("user_school_roles")
+      .select("id")
+      .eq("user_id", caller.id)
+      .is("school_id", null)
+      .eq("role", "super_admin")
+      .maybeSingle();
+
+    if (existingRoleErr) {
+      return json({ error: existingRoleErr.message }, 400);
+    }
+
+    const roleErr = existingRole
+      ? (
+          await admin
+            .from("user_school_roles")
+            .update({ is_active: true })
+            .eq("id", existingRole.id)
+        ).error
+      : (
+          await admin.from("user_school_roles").insert({
+            user_id: caller.id,
+            school_id: null,
+            role: "super_admin",
+            is_active: true,
+          })
+        ).error;
 
     if (roleErr) {
       return json({ error: roleErr.message }, 400);
     }
 
-    await admin.from("audit_logs").insert({
+    const { error: auditErr } = await admin.from("audit_logs").insert({
       school_id: null,
       actor_id: caller.id,
       action: "bootstrap_super_admin",
@@ -87,6 +127,9 @@ Deno.serve(async (req) => {
       entity_id: null,
       metadata: { email: caller.email },
     });
+    if (auditErr) {
+      console.error("bootstrap-super-admin audit insert failed", auditErr);
+    }
 
     return json({ status: "ok", role: "super_admin", user_id: caller.id }, 200);
   } catch (error) {
@@ -97,7 +140,7 @@ Deno.serve(async (req) => {
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
 function handleCors(req: Request) {

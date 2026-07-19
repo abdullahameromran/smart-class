@@ -70,6 +70,12 @@ type Workspace = {
   school: SchoolRecord | null;
 };
 
+type BootstrapStatus = {
+  initialized: boolean;
+  can_bootstrap: boolean;
+  message: string | null;
+};
+
 type RoleRow = {
   id: string;
   user_id: string;
@@ -1007,16 +1013,40 @@ async function getAuthHeaders() {
     : {};
 }
 
-async function invokeFunctionJson<T>(name: string, body: Record<string, unknown>) {
+async function fetchFunctionJson<T>(
+  name: string,
+  options: {
+    method?: "GET" | "POST";
+    body?: Record<string, unknown>;
+  } = {},
+) {
   const headers = await getAuthHeaders();
-  const { data, error } = await supabase.functions.invoke(name, {
-    body,
-    headers,
+  const method = options.method ?? "POST";
+  const response = await fetch(`${supabaseUrl}/functions/v1/${name}`, {
+    method,
+    headers: {
+      apikey: supabaseAnonKey,
+      Authorization: (headers.Authorization as string | undefined) ?? "",
+      ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(method === "POST" && options.body ? { body: JSON.stringify(options.body) } : {}),
   });
-  if (error) {
-    throw new Error(error.message);
+
+  const responseText = await response.text();
+  const parsed = responseText ? safeJsonParse(responseText) : null;
+  if (!response.ok) {
+    const message =
+      parsed && typeof parsed === "object" && parsed && "error" in parsed && typeof parsed.error === "string"
+        ? parsed.error
+        : responseText || "Request failed";
+    throw new Error(message);
   }
-  return data as T;
+
+  return (parsed ?? null) as T;
+}
+
+async function invokeFunctionJson<T>(name: string, body: Record<string, unknown>) {
+  return fetchFunctionJson<T>(name, { method: "POST", body });
 }
 
 async function bootstrapSuperAdminRole(firstName?: string | null, lastName?: string | null) {
@@ -1024,6 +1054,18 @@ async function bootstrapSuperAdminRole(firstName?: string | null, lastName?: str
     first_name: firstName ?? undefined,
     last_name: lastName ?? undefined,
   });
+}
+
+async function getBootstrapSuperAdminStatus() {
+  return fetchFunctionJson<BootstrapStatus>("bootstrap-super-admin", { method: "GET" });
+}
+
+function safeJsonParse(value: string) {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 async function downloadExport(entity: string, schoolId: string, academicYearId?: string) {
@@ -3888,6 +3930,7 @@ function NoWorkspaceScreen({
   onRefresh,
   onSignOut,
   busy,
+  bootstrapAvailable,
 }: {
   error: string | null;
   profile: BasicProfile;
@@ -3895,6 +3938,7 @@ function NoWorkspaceScreen({
   onRefresh: () => void;
   onSignOut: () => void;
   busy: boolean;
+  bootstrapAvailable: boolean;
 }) {
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10">
@@ -3915,15 +3959,19 @@ function NoWorkspaceScreen({
           <div className="rounded-2xl bg-muted/40 p-5">
             <p className="text-sm font-semibold">What to do next</p>
             <p className="mt-2 text-sm text-muted-foreground">
-              Use first-time setup only once for a brand-new system. If schools are already set up, ask an existing admin to give this account access.
+              {bootstrapAvailable
+                ? "This project still allows first-time setup. You can continue once to create the first platform owner."
+                : "This project is already initialized. Ask an existing admin to give this account access instead of running first-time setup."}
             </p>
           </div>
         </div>
 
         <div className="mt-8 flex flex-wrap gap-3">
-          <Button onClick={onBootstrap} disabled={busy}>
-            {busy ? "Setting up..." : "Run first-time setup"}
-          </Button>
+          {bootstrapAvailable ? (
+            <Button onClick={onBootstrap} disabled={busy}>
+              {busy ? "Setting up..." : "Run first-time setup"}
+            </Button>
+          ) : null}
           <Button variant="secondary" onClick={onRefresh} disabled={busy}>
             Refresh access
           </Button>
@@ -13016,6 +13064,8 @@ export default function SmartClassLiveApp() {
   const [view, setView] = useState(DEFAULT_VIEW);
   const [flash, setFlash] = useState<FlashState>(null);
   const [error, setError] = useState<string | null>(null);
+  const [bootstrapStatus, setBootstrapStatus] = useState<BootstrapStatus | null>(null);
+  const [bootstrapStatusLoading, setBootstrapStatusLoading] = useState(false);
 
   const navigateTo = (nextPath: string, replace = false) => {
     const normalized = normalizePath(nextPath);
@@ -13040,8 +13090,30 @@ export default function SmartClassLiveApp() {
       const stored = window.localStorage.getItem(`smart-class.workspace.${targetUser.id}`);
       const nextWorkspace = result.workspaces.find((item) => item.key === stored) ?? result.workspaces[0] ?? null;
       setWorkspaceKey(nextWorkspace?.key ?? null);
-      setError(result.workspaces.length === 0 ? "This account does not have access to any school or admin area yet." : null);
+      if (result.workspaces.length === 0) {
+        setBootstrapStatusLoading(true);
+        try {
+          const nextBootstrapStatus = await getBootstrapSuperAdminStatus();
+          setBootstrapStatus(nextBootstrapStatus);
+          setError(
+            nextBootstrapStatus.can_bootstrap
+              ? "This account does not have access yet. If this is a brand-new Smart Class setup, you can run first-time setup once."
+              : nextBootstrapStatus.message || "This project is already initialized. Ask an existing admin to invite this account.",
+          );
+        } catch {
+          setBootstrapStatus(null);
+          setError("This account does not have access to any school or admin area yet.");
+        } finally {
+          setBootstrapStatusLoading(false);
+        }
+      } else {
+        setBootstrapStatus(null);
+        setBootstrapStatusLoading(false);
+        setError(null);
+      }
     } catch (membershipError) {
+      setBootstrapStatus(null);
+      setBootstrapStatusLoading(false);
       setError(membershipError instanceof Error ? membershipError.message : "Failed to load your access.");
     } finally {
       setMembershipLoading(false);
@@ -13095,6 +13167,8 @@ export default function SmartClassLiveApp() {
       setWorkspaceKey(null);
       setWorkspaceOverride(null);
       setData(null);
+      setBootstrapStatus(null);
+      setBootstrapStatusLoading(false);
       return;
     }
 
@@ -13172,6 +13246,8 @@ export default function SmartClassLiveApp() {
     setWorkspaces([]);
     setWorkspaceKey(null);
     setWorkspaceOverride(null);
+    setBootstrapStatus(null);
+    setBootstrapStatusLoading(false);
     navigateTo("/login", true);
   };
 
@@ -13180,14 +13256,26 @@ export default function SmartClassLiveApp() {
     setBootstrapLoading(true);
     try {
       await bootstrapSuperAdminRole(profile.first_name, profile.last_name);
+      setError(null);
+      setBootstrapStatus(null);
       notify("success", "Initial super admin role created.");
       await refreshMemberships(session.user);
     } catch (bootstrapError) {
-      notify(
-        "error",
+      const message =
         bootstrapError instanceof Error
           ? bootstrapError.message
-          : "Failed to bootstrap the first super admin.",
+          : "Failed to bootstrap the first super admin.";
+      setError(message);
+      if (message.toLowerCase().includes("already initialized")) {
+        setBootstrapStatus({
+          initialized: true,
+          can_bootstrap: false,
+          message,
+        });
+      }
+      notify(
+        "error",
+        message,
       );
     } finally {
       setBootstrapLoading(false);
@@ -13244,7 +13332,8 @@ export default function SmartClassLiveApp() {
         <NoWorkspaceScreen
           error={error}
           profile={profile}
-          busy={membershipLoading || bootstrapLoading}
+          busy={membershipLoading || bootstrapLoading || bootstrapStatusLoading}
+          bootstrapAvailable={bootstrapStatus?.can_bootstrap ?? false}
           onBootstrap={() => void bootstrapInitialSuperAdmin()}
           onRefresh={() => void refreshMemberships(session.user)}
           onSignOut={() => void signOut()}
