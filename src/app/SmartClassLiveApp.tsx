@@ -220,6 +220,24 @@ type Lesson = {
   created_at: string;
 };
 
+type LessonAttachment = {
+  id: string;
+  lesson_id: string;
+  file_name: string;
+  file_url: string;
+  file_kind: string;
+  uploaded_at: string;
+};
+
+type LessonProgress = {
+  id: string;
+  school_id: string;
+  lesson_id: string;
+  student_id: string;
+  completed_at: string;
+  last_viewed_at: string;
+};
+
 type Homework = {
   id: string;
   school_id: string;
@@ -528,6 +546,8 @@ type TeacherData = {
   timeSlots: TimeSlot[];
   students: StudentSummary[];
   lessons: Lesson[];
+  lessonAttachments: LessonAttachment[];
+  lessonProgress: LessonProgress[];
   homework: HomeworkBundle[];
   tests: TestBundle[];
   attendance: AttendanceRecord[];
@@ -547,6 +567,8 @@ type StudentData = {
   workingDays: WorkingDay[];
   timeSlots: TimeSlot[];
   lessons: Lesson[];
+  lessonAttachments: LessonAttachment[];
+  lessonProgress: LessonProgress[];
   homework: HomeworkBundle[];
   tests: TestBundle[];
   grades: FinalGrade[];
@@ -568,6 +590,8 @@ type ParentData = {
   workingDays: WorkingDay[];
   timeSlots: TimeSlot[];
   lessons: Lesson[];
+  lessonAttachments: LessonAttachment[];
+  lessonProgress: LessonProgress[];
   homework: HomeworkBundle[];
   tests: TestBundle[];
   grades: FinalGrade[];
@@ -1686,6 +1710,8 @@ async function loadTeacherData(schoolId: string, currentUserId: string) {
     testChoices,
     testSubmissions,
     testAnswers,
+    lessonAttachments,
+    lessonProgress,
     attendance,
     teacherProfiles,
   ] = await Promise.all([
@@ -1775,10 +1801,24 @@ async function loadTeacherData(schoolId: string, currentUserId: string) {
                     .in("test_id", testIds)
                 : Promise.resolve({ data: [] as TestSubmission[], error: null }))) as unknown as {
                 data: TestSubmission[];
-              }).data ?? []).map((submission) => submission.id),
+                }).data ?? []).map((submission) => submission.id),
             ),
           )
       : Promise.resolve({ data: [] as TestAnswer[], error: null }),
+    lessonIds.length
+      ? supabase
+          .from("lesson_attachments")
+          .select("id,lesson_id,file_name,file_url,file_kind,uploaded_at")
+          .in("lesson_id", lessonIds)
+          .order("uploaded_at", { ascending: false })
+      : Promise.resolve({ data: [] as LessonAttachment[], error: null }),
+    lessonIds.length
+      ? supabase
+          .from("student_lesson_progress")
+          .select("id,school_id,lesson_id,student_id,completed_at,last_viewed_at")
+          .eq("school_id", schoolId)
+          .in("lesson_id", lessonIds)
+      : Promise.resolve({ data: [] as LessonProgress[], error: null }),
     lessonIds.length
       ? supabase
           .from("attendance_records")
@@ -1853,6 +1893,8 @@ async function loadTeacherData(schoolId: string, currentUserId: string) {
     timeSlots: (unwrap(timeSlots) as unknown) as TimeSlot[],
     students: studentRows,
     lessons: lessonRows,
+    lessonAttachments: (unwrap(lessonAttachments) as unknown) as LessonAttachment[],
+    lessonProgress: (unwrap(lessonProgress) as unknown) as LessonProgress[],
     homework: homeworkBundles,
     tests: testBundles,
     attendance: (unwrap(attendance) as unknown) as AttendanceRecord[],
@@ -1929,7 +1971,7 @@ async function loadStudentData(schoolId: string, currentUserId: string) {
   const homeworkIds = homeworkRows.map((item) => item.id);
   const testIds = testRows.map((item) => item.id);
 
-  const [homeworkQuestions, homeworkChoices, homeworkSubmissions, homeworkAnswers, testQuestions, testChoices, testSubmissions, testAnswers, assignments] =
+  const [homeworkQuestions, homeworkChoices, homeworkSubmissions, homeworkAnswers, testQuestions, testChoices, testSubmissions, testAnswers, lessonAttachments, lessonProgress, assignments] =
     await Promise.all([
       homeworkIds.length
         ? supabase
@@ -2021,10 +2063,31 @@ async function loadStudentData(schoolId: string, currentUserId: string) {
                       .in("test_id", testIds)
                   : Promise.resolve({ data: [] as TestSubmission[], error: null }))) as unknown as {
                   data: TestSubmission[];
-                }).data ?? []).map((submission) => submission.id),
+                  }).data ?? []).map((submission) => submission.id),
               ),
             )
         : Promise.resolve({ data: [] as TestAnswer[], error: null }),
+      ((unwrap(lessons) as unknown) as Lesson[]).length
+        ? supabase
+            .from("lesson_attachments")
+            .select("id,lesson_id,file_name,file_url,file_kind,uploaded_at")
+            .in(
+              "lesson_id",
+              ((unwrap(lessons) as unknown) as Lesson[]).map((lesson) => lesson.id),
+            )
+            .order("uploaded_at", { ascending: false })
+        : Promise.resolve({ data: [] as LessonAttachment[], error: null }),
+      ((unwrap(lessons) as unknown) as Lesson[]).length
+        ? supabase
+            .from("student_lesson_progress")
+            .select("id,school_id,lesson_id,student_id,completed_at,last_viewed_at")
+            .eq("school_id", schoolId)
+            .eq("student_id", currentUserId)
+            .in(
+              "lesson_id",
+              ((unwrap(lessons) as unknown) as Lesson[]).map((lesson) => lesson.id),
+            )
+        : Promise.resolve({ data: [] as LessonProgress[], error: null }),
       supabase
         .from("teacher_subject_assignments")
         .select("id,school_id,teacher_id,subject_id,class_id")
@@ -2053,6 +2116,8 @@ async function loadStudentData(schoolId: string, currentUserId: string) {
     workingDays: (unwrap(workingDays) as unknown) as WorkingDay[],
     timeSlots: (unwrap(timeSlots) as unknown) as TimeSlot[],
     lessons: (unwrap(lessons) as unknown) as Lesson[],
+    lessonAttachments: (unwrap(lessonAttachments) as unknown) as LessonAttachment[],
+    lessonProgress: (unwrap(lessonProgress) as unknown) as LessonProgress[],
     homework: bundleHomework(
       homeworkRows,
       (unwrap(lessons) as unknown) as Lesson[],
@@ -2162,6 +2227,8 @@ async function loadParentData(schoolId: string, currentUserId: string) {
     testChoices,
     testSubmissions,
     testAnswers,
+    lessonAttachments,
+    lessonProgress,
   ] = await Promise.all([
     homeworkIds.length
       ? supabase
@@ -2253,10 +2320,31 @@ async function loadParentData(schoolId: string, currentUserId: string) {
                     .in("test_id", testIds)
                 : Promise.resolve({ data: [] as TestSubmission[], error: null }))) as unknown as {
                 data: TestSubmission[];
-              }).data ?? []).map((submission) => submission.id),
+                }).data ?? []).map((submission) => submission.id),
             ),
           )
       : Promise.resolve({ data: [] as TestAnswer[], error: null }),
+    ((unwrap(lessons) as unknown) as Lesson[]).length
+      ? supabase
+          .from("lesson_attachments")
+          .select("id,lesson_id,file_name,file_url,file_kind,uploaded_at")
+          .in(
+            "lesson_id",
+            ((unwrap(lessons) as unknown) as Lesson[]).map((lesson) => lesson.id),
+          )
+          .order("uploaded_at", { ascending: false })
+      : Promise.resolve({ data: [] as LessonAttachment[], error: null }),
+    childIds.length && ((unwrap(lessons) as unknown) as Lesson[]).length
+      ? supabase
+          .from("student_lesson_progress")
+          .select("id,school_id,lesson_id,student_id,completed_at,last_viewed_at")
+          .eq("school_id", schoolId)
+          .in("student_id", childIds)
+          .in(
+            "lesson_id",
+            ((unwrap(lessons) as unknown) as Lesson[]).map((lesson) => lesson.id),
+          )
+      : Promise.resolve({ data: [] as LessonProgress[], error: null }),
   ]);
 
   const classRows = (unwrap(classes) as unknown) as ClassRecord[];
@@ -2293,8 +2381,10 @@ async function loadParentData(schoolId: string, currentUserId: string) {
     lessons: ((unwrap(lessons) as unknown) as Lesson[]).filter((lesson) =>
       ((unwrap(enrollments) as unknown) as ClassEnrollment[]).some(
         (enrollment) => childIds.includes(enrollment.student_id) && enrollment.class_id === lesson.class_id,
+        ),
       ),
-    ),
+    lessonAttachments: (unwrap(lessonAttachments) as unknown) as LessonAttachment[],
+    lessonProgress: (unwrap(lessonProgress) as unknown) as LessonProgress[],
     homework: bundleHomework(
       homeworkRows,
       ((unwrap(lessons) as unknown) as Lesson[]).filter((lesson) =>
@@ -7185,6 +7275,7 @@ function SchoolAdminPortal({
   const [activeTeacherId, setActiveTeacherId] = useState<string | null>(null);
   const [activeStudentId, setActiveStudentId] = useState<string | null>(null);
   const [activeAnnouncementId, setActiveAnnouncementId] = useState<string | null>(null);
+  const [activeGradeId, setActiveGradeId] = useState<string | null>(null);
   const [teacherAssignmentForm, setTeacherAssignmentForm] = useState({
     subject_id: data.subjects[0]?.id ?? "",
     class_id: "",
@@ -7203,6 +7294,7 @@ function SchoolAdminPortal({
   const selectedAnnouncement = activeAnnouncementId
     ? data.announcements.find((announcement) => announcement.item.id === activeAnnouncementId) ?? null
     : null;
+  const selectedGrade = activeGradeId ? data.grades.find((grade) => grade.id === activeGradeId) ?? null : null;
 
   useEffect(() => {
     setDaySelection(data.workingDays.map((item) => item.day_of_week));
@@ -8131,34 +8223,119 @@ function SchoolAdminPortal({
       <div className="space-y-6">
         <SectionTrail
           items={["Teacher", "Final Results"]}
-          description="Open one result at a time so you can review the student, class, and remarks clearly."
-          action={<Badge>{data.grades.length} results</Badge>}
+          description="Enter grades for one class and subject at a time, then submit them for school-admin approval."
+          action={<Badge>{teacherGradeRows.length} students</Badge>}
         />
         <div className="grid gap-4 md:grid-cols-3">
           <StatCard label="Published" value={data.grades.filter((grade) => grade.status === "approved").length} />
-          <StatCard label="Pending" value={data.grades.filter((grade) => grade.status !== "approved").length} />
-          <StatCard label="Subjects" value={unique(data.grades.map((grade) => grade.subject_id)).length} />
+          <StatCard label="Submitted" value={data.grades.filter((grade) => grade.status === "submitted").length} />
+          <StatCard label="Drafts" value={data.grades.filter((grade) => grade.status === "draft").length} />
         </div>
-        <Panel title="Result Directory" description="Tap a row to open the fuller grade summary in a popup.">
-          {data.grades.length === 0 ? (
-            <EmptyState message="No final results are available yet." />
+        <Panel title="Grade Entry Workspace" description="Choose a class and subject, then save each student's final result.">
+          <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center">
+            <Select value={gradeClassFilter} onChange={(event) => setGradeClassFilter(event.target.value)} className="max-w-[220px]">
+              {teacherGradeClassOptions.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </Select>
+            <Select value={gradeSubjectFilter} onChange={(event) => setGradeSubjectFilter(event.target.value)} className="max-w-[220px]">
+              {teacherGradeSubjectOptions.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          {!gradeClassFilter || !gradeSubjectFilter ? (
+            <EmptyState message="Add a teaching assignment first so final-grade entry can open here." />
+          ) : teacherGradeRows.length === 0 ? (
+            <EmptyState message="No students are currently enrolled in this class." />
           ) : (
-            <div className="space-y-3">
-              {data.grades.map((grade) => (
-                <div key={grade.id} className="flex flex-col gap-3 rounded-2xl bg-muted/30 p-4 lg:flex-row lg:items-center lg:justify-between">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-semibold text-foreground">{studentMap[grade.student_id]?.name ?? "Student"}</p>
-                      <Badge>{subjectMap[grade.subject_id]?.name ?? "Subject"}</Badge>
-                      <Badge>{classMap[grade.class_id]?.name ?? "Class"}</Badge>
+            <div className="space-y-4">
+              {teacherGradeRows.map(({ student, existingGrade, draft }) => (
+                <div key={student.userId} className="rounded-[1.8rem] border border-border bg-card p-5 shadow-sm">
+                  <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-semibold text-foreground">{student.name}</p>
+                        <Badge>{classMap[gradeClassFilter]?.name ?? "Class"}</Badge>
+                        <Badge>{subjectMap[gradeSubjectFilter]?.name ?? "Subject"}</Badge>
+                        <Badge tone={draft.status === "approved" ? "success" : draft.status === "submitted" ? "default" : "warning"}>
+                          {titleCaseLabel(draft.status)}
+                        </Badge>
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">{student.email || "No email available"}</p>
                     </div>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      Grade {grade.grade_letter || "N/A"} / {grade.grade_value ?? "N/A"} / {titleCaseLabel(grade.status)}
-                    </p>
+                    {existingGrade ? (
+                      <Button type="button" variant="secondary" onClick={() => setActiveGradeId(existingGrade.id)}>
+                        Open result
+                      </Button>
+                    ) : null}
                   </div>
-                  <Button type="button" variant="secondary" onClick={() => setActiveGradeId(grade.id)}>
-                    Open result
-                  </Button>
+                  <div className="mt-5 grid gap-4 lg:grid-cols-[0.8fr_0.7fr_1.4fr_0.9fr_auto]">
+                    <Field label="Score">
+                      <Input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.01"
+                        value={draft.grade_value}
+                        onChange={(event) =>
+                          setGradeDrafts((prev) => ({
+                            ...prev,
+                            [student.userId]: { ...draft, grade_value: event.target.value },
+                          }))
+                        }
+                        disabled={draft.status === "approved"}
+                      />
+                    </Field>
+                    <Field label="Letter">
+                      <Input
+                        value={draft.grade_letter}
+                        onChange={(event) =>
+                          setGradeDrafts((prev) => ({
+                            ...prev,
+                            [student.userId]: { ...draft, grade_letter: event.target.value },
+                          }))
+                        }
+                        disabled={draft.status === "approved"}
+                      />
+                    </Field>
+                    <Field label="Remarks">
+                      <Input
+                        value={draft.remarks}
+                        onChange={(event) =>
+                          setGradeDrafts((prev) => ({
+                            ...prev,
+                            [student.userId]: { ...draft, remarks: event.target.value },
+                          }))
+                        }
+                        disabled={draft.status === "approved"}
+                      />
+                    </Field>
+                    <Field label="Stage">
+                      <Select
+                        value={draft.status}
+                        onChange={(event) =>
+                          setGradeDrafts((prev) => ({
+                            ...prev,
+                            [student.userId]: { ...draft, status: event.target.value },
+                          }))
+                        }
+                        disabled={draft.status === "approved"}
+                      >
+                        <option value="draft">Draft</option>
+                        <option value="submitted">Submitted for approval</option>
+                      </Select>
+                    </Field>
+                    <div className="flex items-end">
+                      <Button type="button" onClick={() => saveGradeDraft(student.userId)} disabled={busy || draft.status === "approved"}>
+                        Save
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
@@ -8365,6 +8542,7 @@ function SchoolAdminPortalModern({
   const [activeTeacherId, setActiveTeacherId] = useState<string | null>(null);
   const [activeStudentId, setActiveStudentId] = useState<string | null>(null);
   const [activeAnnouncementId, setActiveAnnouncementId] = useState<string | null>(null);
+  const [activeGradeId, setActiveGradeId] = useState<string | null>(null);
   const [teacherAssignmentForm, setTeacherAssignmentForm] = useState({
     subject_id: data.subjects[0]?.id ?? "",
     class_id: "",
@@ -8386,6 +8564,7 @@ function SchoolAdminPortalModern({
   const selectedAnnouncement = activeAnnouncementId
     ? data.announcements.find((announcement) => announcement.item.id === activeAnnouncementId) ?? null
     : null;
+  const selectedGrade = activeGradeId ? data.grades.find((grade) => grade.id === activeGradeId) ?? null : null;
 
   useEffect(() => {
     setDaySelection(data.workingDays.map((item) => item.day_of_week));
@@ -8793,6 +8972,27 @@ function SchoolAdminPortalModern({
     }, "Announcement updated.");
   };
 
+  const approveFinalGrade = () => {
+    if (!selectedGrade) return;
+    if (selectedGrade.status === "approved") {
+      onNotify("info", "This final grade is already approved and locked.");
+      return;
+    }
+
+    void runAction(async () => {
+      unwrap(
+        await supabase
+          .from("final_grades")
+          .update({
+            status: "approved",
+            approved_by: profile.id,
+          })
+          .eq("id", selectedGrade.id),
+      );
+      setActiveGradeId(null);
+    }, "Final grade approved.");
+  };
+
   const filteredTeachers = data.teachers.filter((teacher) => {
     const haystack = [teacher.name, teacher.email ?? "", teacher.assignments.join(" ")].join(" ").toLowerCase();
     return haystack.includes(teacherQuery.trim().toLowerCase());
@@ -8937,6 +9137,67 @@ function SchoolAdminPortalModern({
               </Button>
             </div>
           </form>
+        </Panel>
+      </div>
+    </PopupModal>
+  ) : null;
+
+  const gradePopup = selectedGrade ? (
+    <PopupModal
+      open={!!selectedGrade}
+      onClose={() => setActiveGradeId(null)}
+      title={data.students.find((student) => student.userId === selectedGrade.student_id)?.name ?? "Final Grade"}
+      description="Review the full final-grade record, then approve it when everything is ready."
+      footer={
+        <div className="flex flex-wrap justify-end gap-3">
+          <Button type="button" variant="ghost" onClick={() => setActiveGradeId(null)}>
+            Close
+          </Button>
+          {selectedGrade.status !== "approved" ? (
+            <Button type="button" onClick={approveFinalGrade} disabled={busy}>
+              Approve grade
+            </Button>
+          ) : null}
+        </div>
+      }
+    >
+      <div className="grid gap-4 sm:grid-cols-4">
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Student</p>
+          <p className="mt-2 font-bold text-foreground">
+            {data.students.find((student) => student.userId === selectedGrade.student_id)?.name ?? "Student"}
+          </p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Class</p>
+          <p className="mt-2 font-bold text-foreground">{classMap[selectedGrade.class_id]?.name ?? "Class"}</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Subject</p>
+          <p className="mt-2 font-bold text-foreground">{subjectMap[selectedGrade.subject_id]?.name ?? "Subject"}</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</p>
+          <p className="mt-2 font-bold text-foreground">{titleCaseLabel(selectedGrade.status)}</p>
+        </div>
+      </div>
+      <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+        <Panel title="Result Summary" description="Confirm the saved score and letter before locking the record.">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="rounded-2xl bg-muted/25 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Numeric grade</p>
+              <p className="mt-2 text-2xl font-bold text-foreground">{selectedGrade.grade_value ?? "N/A"}</p>
+            </div>
+            <div className="rounded-2xl bg-muted/25 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Letter grade</p>
+              <p className="mt-2 text-2xl font-bold text-foreground">{selectedGrade.grade_letter || "N/A"}</p>
+            </div>
+          </div>
+        </Panel>
+        <Panel title="Remarks" description="Teacher comments stay visible here for admin review.">
+          <div className="rounded-2xl bg-muted/25 p-5">
+            <p className="text-sm leading-6 text-foreground">{selectedGrade.remarks || "No remarks added yet."}</p>
+          </div>
         </Panel>
       </div>
     </PopupModal>
@@ -9873,19 +10134,20 @@ function SchoolAdminPortalModern({
             <EmptyState message="No final grades match these filters yet." />
           ) : (
             <div className="overflow-hidden rounded-2xl border border-border">
-              <div className="hidden grid-cols-[1.25fr_0.8fr_0.8fr_0.8fr_0.7fr_0.9fr] gap-4 border-b border-border bg-muted/20 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground lg:grid">
+              <div className="hidden grid-cols-[1.15fr_0.8fr_0.8fr_0.8fr_0.7fr_0.9fr_0.8fr] gap-4 border-b border-border bg-muted/20 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground lg:grid">
                 <p>Student</p>
                 <p>Class</p>
                 <p>Subject</p>
                 <p>Score</p>
                 <p>Letter</p>
                 <p>Status</p>
+                <p>Action</p>
               </div>
               <div className="divide-y divide-border">
                 {gradeRows.map((grade) => {
                   const student = data.students.find((item) => item.userId === grade.student_id);
                   return (
-                    <div key={grade.id} className="grid gap-4 px-5 py-4 lg:grid-cols-[1.25fr_0.8fr_0.8fr_0.8fr_0.7fr_0.9fr] lg:items-center">
+                    <div key={grade.id} className="grid gap-4 px-5 py-4 lg:grid-cols-[1.15fr_0.8fr_0.8fr_0.8fr_0.7fr_0.9fr_0.8fr] lg:items-center">
                       <div className="flex items-center gap-3">
                         <div className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold ${avatarTone(grade.student_id)}`}>
                           {initialsFor(student?.name ?? "Student")}
@@ -9902,6 +10164,11 @@ function SchoolAdminPortalModern({
                       <div>
                         <Badge tone={grade.status === "approved" ? "success" : "warning"}>{titleCaseLabel(grade.status)}</Badge>
                       </div>
+                      <div>
+                        <Button type="button" variant="secondary" onClick={() => setActiveGradeId(grade.id)}>
+                          Open
+                        </Button>
+                      </div>
                     </div>
                   );
                 })}
@@ -9909,6 +10176,7 @@ function SchoolAdminPortalModern({
             </div>
           )}
         </Panel>
+        {gradePopup}
       </div>
     );
   }
@@ -10220,6 +10488,23 @@ function TeacherPortal({
     subject: "",
     body: "",
   });
+  const [lessonAttachmentForm, setLessonAttachmentForm] = useState({
+    file_name: "",
+    file_url: "",
+    file_kind: "pdf",
+  });
+  const [gradeClassFilter, setGradeClassFilter] = useState(
+    data.assignments.find((item) => item.class_id)?.class_id ?? data.classes[0]?.id ?? "",
+  );
+  const [gradeSubjectFilter, setGradeSubjectFilter] = useState(
+    data.assignments.find((item) => item.class_id === (data.assignments.find((row) => row.class_id)?.class_id ?? data.classes[0]?.id ?? ""))?.subject_id ??
+      data.assignments[0]?.subject_id ??
+      data.subjects[0]?.id ??
+      "",
+  );
+  const [gradeDrafts, setGradeDrafts] = useState<
+    Record<string, { grade_value: string; grade_letter: string; remarks: string; status: string }>
+  >({});
 
   const classMap = byId(data.classes);
   const subjectMap = byId(data.subjects);
@@ -10312,6 +10597,47 @@ function TeacherPortal({
     if (slotDelta !== 0) return slotDelta;
     return (classMap[a.class_id]?.name ?? "").localeCompare(classMap[b.class_id]?.name ?? "");
   });
+  const selectedLessonAttachments = selectedLesson
+    ? data.lessonAttachments.filter((attachment) => attachment.lesson_id === selectedLesson.id)
+    : [];
+  const selectedLessonProgress = selectedLesson
+    ? data.lessonProgress.filter((progress) => progress.lesson_id === selectedLesson.id)
+    : [];
+  const teacherGradeClassOptions = assignedClassIds
+    .map((classId) => classMap[classId])
+    .filter((item): item is ClassRecord => Boolean(item));
+  const teacherGradeSubjectOptions = unique(
+    data.assignments
+      .filter((item) => !item.class_id || item.class_id === gradeClassFilter)
+      .map((item) => item.subject_id),
+  )
+    .map((subjectId) => subjectMap[subjectId])
+    .filter((item): item is SubjectRecord => Boolean(item));
+  const teacherGradeStudents = data.students.filter((student) => student.classId === gradeClassFilter);
+  const teacherGradeRows = teacherGradeStudents.map((student) => {
+    const currentClass = classMap[gradeClassFilter];
+    const existingGrade =
+      data.grades.find(
+        (grade) =>
+          grade.student_id === student.userId &&
+          grade.class_id === gradeClassFilter &&
+          grade.subject_id === gradeSubjectFilter &&
+          grade.academic_year_id === currentClass?.academic_year_id,
+      ) ?? null;
+
+    return {
+      student,
+      existingGrade,
+      draft:
+        gradeDrafts[student.userId] ??
+        ({
+          grade_value: existingGrade?.grade_value?.toString() ?? "",
+          grade_letter: existingGrade?.grade_letter ?? "",
+          remarks: existingGrade?.remarks ?? "",
+          status: existingGrade?.status ?? "draft",
+        } satisfies { grade_value: string; grade_letter: string; remarks: string; status: string }),
+    };
+  });
 
   useEffect(() => {
     if (!selectedAttendanceLesson) {
@@ -10326,6 +10652,49 @@ function TeacherPortal({
       }, {}),
     );
   }, [selectedAttendanceLesson?.id, attendanceStudents.length, data.attendance]);
+
+  useEffect(() => {
+    if (!teacherGradeClassOptions.length) return;
+    if (!gradeClassFilter || !teacherGradeClassOptions.some((item) => item.id === gradeClassFilter)) {
+      setGradeClassFilter(teacherGradeClassOptions[0].id);
+    }
+  }, [gradeClassFilter, teacherGradeClassOptions]);
+
+  useEffect(() => {
+    if (!teacherGradeSubjectOptions.length) return;
+    if (!gradeSubjectFilter || !teacherGradeSubjectOptions.some((item) => item.id === gradeSubjectFilter)) {
+      setGradeSubjectFilter(teacherGradeSubjectOptions[0].id);
+    }
+  }, [gradeSubjectFilter, teacherGradeSubjectOptions]);
+
+  useEffect(() => {
+    setGradeDrafts(
+      data.students
+        .filter((student) => student.classId === gradeClassFilter)
+        .reduce<Record<string, { grade_value: string; grade_letter: string; remarks: string; status: string }>>(
+        (acc, student) => {
+          const currentClass = data.classes.find((item) => item.id === gradeClassFilter);
+          const existingGrade =
+            data.grades.find(
+              (grade) =>
+                grade.student_id === student.userId &&
+                grade.class_id === gradeClassFilter &&
+                grade.subject_id === gradeSubjectFilter &&
+                grade.academic_year_id === currentClass?.academic_year_id,
+            ) ?? null;
+
+          acc[student.userId] = {
+            grade_value: existingGrade?.grade_value?.toString() ?? "",
+            grade_letter: existingGrade?.grade_letter ?? "",
+            remarks: existingGrade?.remarks ?? "",
+            status: existingGrade?.status ?? "draft",
+          };
+          return acc;
+        },
+        {},
+      ),
+    );
+  }, [data.classes, data.grades, data.students, gradeClassFilter, gradeSubjectFilter]);
 
   const runAction = async (work: () => Promise<void>, successMessage: string) => {
     try {
@@ -10363,6 +10732,30 @@ function TeacherPortal({
         video_url: "",
       }));
     }, "Lesson created.");
+  };
+
+  const addLessonAttachment = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedLesson) {
+      onNotify("error", "Open a lesson before adding materials.");
+      return;
+    }
+
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("lesson_attachments").insert({
+          lesson_id: selectedLesson.id,
+          file_name: lessonAttachmentForm.file_name,
+          file_url: lessonAttachmentForm.file_url,
+          file_kind: lessonAttachmentForm.file_kind,
+        }),
+      );
+      setLessonAttachmentForm({
+        file_name: "",
+        file_url: "",
+        file_kind: "pdf",
+      });
+    }, "Lesson attachment added.");
   };
 
   const createHomework = (event: FormEvent<HTMLFormElement>) => {
@@ -10542,6 +10935,65 @@ function TeacherPortal({
     }, "Message sent.");
   };
 
+  const saveGradeDraft = (studentId: string) => {
+    const draft = gradeDrafts[studentId];
+    const classRecord = classMap[gradeClassFilter];
+    const student = data.students.find((item) => item.userId === studentId);
+
+    if (!draft || !classRecord || !student) {
+      onNotify("error", "Choose a valid class, subject, and student first.");
+      return;
+    }
+
+    if (!gradeSubjectFilter) {
+      onNotify("error", "Choose a subject before saving grades.");
+      return;
+    }
+
+    const parsedValue = draft.grade_value.trim() ? Number(draft.grade_value) : null;
+    if (draft.grade_value.trim() && (parsedValue == null || Number.isNaN(parsedValue))) {
+      onNotify("error", "Grade value must be a valid number.");
+      return;
+    }
+
+    const existingGrade =
+      data.grades.find(
+        (grade) =>
+          grade.student_id === studentId &&
+          grade.class_id === gradeClassFilter &&
+          grade.subject_id === gradeSubjectFilter &&
+          grade.academic_year_id === classRecord.academic_year_id,
+      ) ?? null;
+
+    if (existingGrade?.status === "approved") {
+      onNotify("error", "Approved final grades are locked and cannot be edited here.");
+      return;
+    }
+
+    const nextStatus = draft.status === "submitted" ? "submitted" : "draft";
+    const payload = {
+      school_id: data.school.id,
+      academic_year_id: classRecord.academic_year_id,
+      class_id: gradeClassFilter,
+      subject_id: gradeSubjectFilter,
+      student_id: studentId,
+      grade_value: parsedValue,
+      grade_letter: draft.grade_letter.trim() || null,
+      remarks: draft.remarks.trim() || null,
+      status: nextStatus,
+      submitted_by: nextStatus === "submitted" ? profile.id : null,
+      submitted_at: nextStatus === "submitted" ? new Date().toISOString() : null,
+    };
+
+    void runAction(async () => {
+      if (existingGrade) {
+        unwrap(await supabase.from("final_grades").update(payload).eq("id", existingGrade.id));
+      } else {
+        unwrap(await supabase.from("final_grades").insert(payload));
+      }
+    }, `${student.name}'s final grade saved.`);
+  };
+
   const saveAttendance = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!selectedAttendanceLesson) {
@@ -10646,6 +11098,16 @@ function TeacherPortal({
                   .map((lesson) => (
                     <div key={lesson.id} className="flex flex-col gap-3 rounded-2xl bg-muted/25 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
                       <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge>{data.lessonAttachments.filter((attachment) => attachment.lesson_id === lesson.id).length} files</Badge>
+                          <Badge tone="success">
+                            {
+                              data.lessonProgress.filter((progress) => progress.lesson_id === lesson.id && progress.completed_at)
+                                .length
+                            }{" "}
+                            complete
+                          </Badge>
+                        </div>
                         <p className="font-semibold text-foreground">{lesson.title}</p>
                         <p className="mt-1 text-sm text-muted-foreground">{formatDate(lesson.lesson_date)}</p>
                       </div>
@@ -10746,6 +11208,72 @@ function TeacherPortal({
           </div>
         </div>
       </Panel>
+      <div className="grid gap-6 xl:grid-cols-[1fr_0.95fr]">
+        <Panel title="Lesson Files" description="Keep lesson PDFs, documents, and links with the lesson itself.">
+          {selectedLessonAttachments.length === 0 ? (
+            <EmptyState message="No lesson files have been added yet." />
+          ) : (
+            <div className="space-y-3">
+              {selectedLessonAttachments.map((attachment) => (
+                <div key={attachment.id} className="rounded-2xl bg-muted/25 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-foreground">{attachment.file_name}</p>
+                      <p className="mt-1 text-xs uppercase tracking-wide text-muted-foreground">{titleCaseLabel(attachment.file_kind)}</p>
+                    </div>
+                    <a
+                      href={attachment.file_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition hover:translate-y-[-1px] hover:shadow-md"
+                    >
+                      Open file
+                      <ArrowRight className="h-4 w-4" />
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+        <Panel title="Add Lesson File" description="Attach one more resource without leaving this lesson.">
+          <form className="grid gap-4" onSubmit={addLessonAttachment}>
+            <Field label="File name">
+              <Input
+                value={lessonAttachmentForm.file_name}
+                onChange={(event) => setLessonAttachmentForm((prev) => ({ ...prev, file_name: event.target.value }))}
+                required
+              />
+            </Field>
+            <Field label="File link">
+              <Input
+                value={lessonAttachmentForm.file_url}
+                onChange={(event) => setLessonAttachmentForm((prev) => ({ ...prev, file_url: event.target.value }))}
+                placeholder="https://..."
+                required
+              />
+            </Field>
+            <Field label="File type">
+              <Select
+                value={lessonAttachmentForm.file_kind}
+                onChange={(event) => setLessonAttachmentForm((prev) => ({ ...prev, file_kind: event.target.value }))}
+              >
+                <option value="pdf">PDF</option>
+                <option value="doc">Document</option>
+                <option value="image">Image</option>
+                <option value="video">Video</option>
+                <option value="other">Other</option>
+              </Select>
+            </Field>
+            <div className="rounded-2xl bg-muted/25 p-4 text-sm text-muted-foreground">
+              {selectedLessonProgress.filter((progress) => progress.completed_at).length} students have already marked this lesson complete.
+            </div>
+            <Button type="submit" disabled={busy}>
+              Save lesson file
+            </Button>
+          </form>
+        </Panel>
+      </div>
     </PopupModal>
   ) : null;
 
@@ -11534,6 +12062,7 @@ function LegacyStudentPortal({
   onRefresh: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [activeLessonId, setActiveLessonId] = useState<string | null>(null);
   const [activeHomeworkId, setActiveHomeworkId] = useState<string | null>(null);
   const [activeTestId, setActiveTestId] = useState<string | null>(null);
   const [homeworkSelections, setHomeworkSelections] = useState<Record<string, string>>({});
@@ -11991,6 +12520,7 @@ function StudentPortal({
   const classMap = byId(data.classes);
   const subjectMap = byId(data.subjects);
   const enrollment = data.enrollments[0] ?? null;
+  const selectedLesson = activeLessonId ? data.lessons.find((lesson) => lesson.id === activeLessonId) ?? null : null;
   const currentClassName = enrollment ? classMap[enrollment.class_id]?.name ?? "Class" : "Class not assigned";
   const today = new Date();
 
@@ -12053,12 +12583,18 @@ function StudentPortal({
   )
     .map((subjectId, index) => {
       const subjectLessons = data.lessons.filter((lesson) => lesson.subject_id === subjectId);
+      const subjectLessonIds = subjectLessons.map((lesson) => lesson.id);
       const subjectHomework = homeworkWithSubmission.filter((bundle) => bundle.lesson?.subject_id === subjectId);
       const subjectTests = testsWithSubmission.filter((bundle) => bundle.item.subject_id === subjectId);
       const subjectGrade = data.grades.find((grade) => grade.subject_id === subjectId) ?? null;
       const homeworkAverage = averageNumbers(subjectHomework.map((bundle) => bundle.submission?.score ?? null));
       const testAverage = averageNumbers(subjectTests.map((bundle) => bundle.submission?.score ?? null));
+      const completedLessons = data.lessonProgress.filter(
+        (progress) => progress.completed_at && subjectLessonIds.includes(progress.lesson_id),
+      ).length;
+      const completionPercent = subjectLessons.length ? Math.round((completedLessons / subjectLessons.length) * 100) : null;
       const progress =
+        completionPercent ??
         subjectGrade?.grade_value ??
         averageNumbers([homeworkAverage, testAverage]) ??
         Math.min(95, Math.max(subjectLessons.length * 14, subjectHomework.length * 18, subjectTests.length * 22, 24));
@@ -12068,6 +12604,7 @@ function StudentPortal({
         name: subjectMap[subjectId]?.name ?? "Subject",
         tone: subjectPalette[index % subjectPalette.length],
         lessonsCount: subjectLessons.length,
+        completedLessons,
         homeworkCount: subjectHomework.length,
         testCount: subjectTests.length,
         homeworkAverage,
@@ -12151,6 +12688,23 @@ function StudentPortal({
     } finally {
       setBusy(false);
     }
+  };
+
+  const markLessonComplete = (lessonId: string) => {
+    void runAction(async () => {
+      unwrap(
+        await supabase.from("student_lesson_progress").upsert(
+          {
+            school_id: data.school.id,
+            lesson_id: lessonId,
+            student_id: profile.id,
+            completed_at: new Date().toISOString(),
+            last_viewed_at: new Date().toISOString(),
+          },
+          { onConflict: "lesson_id,student_id" },
+        ),
+      );
+    }, "Lesson marked complete.");
   };
 
   const submitHomework = (bundle: HomeworkBundle) => {
@@ -12242,6 +12796,99 @@ function StudentPortal({
     }, "Message sent.");
   };
 
+  const lessonPopup = selectedLesson ? (
+    <PopupModal
+      open={!!selectedLesson}
+      onClose={() => setActiveLessonId(null)}
+      title={selectedLesson.title}
+      description="Open the lesson materials, watch the teacher link, and mark the lesson complete when you finish it."
+      footer={
+        <div className="flex flex-wrap justify-end gap-3">
+          <Button type="button" variant="ghost" onClick={() => setActiveLessonId(null)}>
+            Close
+          </Button>
+          {data.lessonProgress.some((progress) => progress.lesson_id === selectedLesson.id && progress.completed_at) ? (
+            <Badge tone="success">Completed</Badge>
+          ) : (
+            <Button type="button" onClick={() => markLessonComplete(selectedLesson.id)} disabled={busy}>
+              <CheckCircle2 className="h-4 w-4" />
+              Mark complete
+            </Button>
+          )}
+        </div>
+      }
+    >
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Subject</p>
+          <p className="mt-2 font-bold text-foreground">{subjectMap[selectedLesson.subject_id]?.name ?? "Subject"}</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Class</p>
+          <p className="mt-2 font-bold text-foreground">{classMap[selectedLesson.class_id]?.name ?? "Class"}</p>
+        </div>
+        <div className="rounded-2xl bg-muted/30 px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Date</p>
+          <p className="mt-2 font-bold text-foreground">{formatDate(selectedLesson.lesson_date)}</p>
+        </div>
+      </div>
+      <Panel title="Lesson Summary" description="Read the notes and open supporting materials from one place.">
+        <div className="space-y-4">
+          <div className="rounded-2xl bg-muted/25 p-4">
+            <p className="text-sm leading-6 text-foreground">{selectedLesson.description || "No lesson summary was added yet."}</p>
+          </div>
+          <div className="rounded-2xl bg-muted/25 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Teacher video</p>
+                <p className="mt-2 text-sm text-foreground">{selectedLesson.video_url || "No video link shared yet."}</p>
+              </div>
+              {selectedLesson.video_url ? (
+                <a
+                  href={selectedLesson.video_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition hover:translate-y-[-1px] hover:shadow-md"
+                >
+                  Open video
+                  <ArrowRight className="h-4 w-4" />
+                </a>
+              ) : null}
+            </div>
+          </div>
+          <div className="rounded-2xl bg-muted/25 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Lesson files</p>
+            <div className="mt-3 space-y-3">
+              {data.lessonAttachments.filter((attachment) => attachment.lesson_id === selectedLesson.id).length === 0 ? (
+                <p className="text-sm text-muted-foreground">No files were attached to this lesson yet.</p>
+              ) : (
+                data.lessonAttachments
+                  .filter((attachment) => attachment.lesson_id === selectedLesson.id)
+                  .map((attachment) => (
+                    <div key={attachment.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-card px-4 py-3">
+                      <div>
+                        <p className="font-semibold text-foreground">{attachment.file_name}</p>
+                        <p className="mt-1 text-xs uppercase tracking-wide text-muted-foreground">{titleCaseLabel(attachment.file_kind)}</p>
+                      </div>
+                      <a
+                        href={attachment.file_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-2 rounded-full border border-primary/20 px-4 py-2 text-sm font-semibold text-primary transition hover:border-primary/40 hover:bg-primary/5"
+                      >
+                        Open
+                        <ArrowRight className="h-4 w-4" />
+                      </a>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+        </div>
+      </Panel>
+    </PopupModal>
+  ) : null;
+
   if (view === "lessons") {
     return (
       <div className="space-y-6">
@@ -12270,7 +12917,9 @@ function StudentPortal({
                   <div className="h-2.5 rounded-full bg-primary transition-all duration-500" style={{ width: `${course.progress}%` }} />
                 </div>
                 <div className="mt-3 flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">{course.lessonsCount} lessons available</span>
+                  <span className="text-muted-foreground">
+                    {course.completedLessons}/{course.lessonsCount} lessons complete
+                  </span>
                   <span className="font-semibold text-primary">{course.grade?.grade_letter ?? scoreToLetter(course.grade?.grade_value ?? course.progress)}</span>
                 </div>
               </div>
@@ -12280,25 +12929,37 @@ function StudentPortal({
         <Panel title="Latest course activity" description="Recent lessons across your subjects.">
           <div className="space-y-3">
             {data.lessons.length === 0 ? (
-              <EmptyState message="No lessons have been posted yet." />
-            ) : (
-              data.lessons.slice(0, 6).map((lesson) => (
-                <div key={lesson.id} className="rounded-2xl border border-border bg-muted/25 p-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge>{subjectMap[lesson.subject_id]?.name ?? "Subject"}</Badge>
-                    <Badge>{classMap[lesson.class_id]?.name ?? "Class"}</Badge>
+            <EmptyState message="No lessons have been posted yet." />
+          ) : (
+            data.lessons.slice(0, 6).map((lesson) => (
+              <div key={lesson.id} className="rounded-2xl border border-border bg-muted/25 p-4">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge>{subjectMap[lesson.subject_id]?.name ?? "Subject"}</Badge>
+                      <Badge>{classMap[lesson.class_id]?.name ?? "Class"}</Badge>
+                      <Badge>{data.lessonAttachments.filter((attachment) => attachment.lesson_id === lesson.id).length} files</Badge>
+                      <Badge tone={data.lessonProgress.some((progress) => progress.lesson_id === lesson.id && progress.completed_at) ? "success" : "warning"}>
+                        {data.lessonProgress.some((progress) => progress.lesson_id === lesson.id && progress.completed_at) ? "Completed" : "Open"}
+                      </Badge>
+                    </div>
+                    <p className="mt-3 text-lg font-bold text-foreground">{lesson.title}</p>
+                    <p className="mt-2 text-sm text-muted-foreground">{lesson.description || "No lesson summary yet."}</p>
+                    <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{formatDate(lesson.lesson_date)}</p>
                   </div>
-                  <p className="mt-3 text-lg font-bold text-foreground">{lesson.title}</p>
-                  <p className="mt-2 text-sm text-muted-foreground">{lesson.description || "No lesson summary yet."}</p>
-                  <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{formatDate(lesson.lesson_date)}</p>
+                  <Button type="button" variant="secondary" onClick={() => setActiveLessonId(lesson.id)}>
+                    Open lesson
+                  </Button>
                 </div>
-              ))
-            )}
-          </div>
-        </Panel>
-      </div>
-    );
-  }
+              </div>
+            ))
+          )}
+        </div>
+      </Panel>
+      {lessonPopup}
+    </div>
+  );
+}
 
   if (view === "homework") {
     const active = data.homework.find((item) => item.item.id === activeHomeworkId) ?? null;

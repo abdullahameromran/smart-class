@@ -256,6 +256,19 @@ create table lesson_attachments (
 );
 create index idx_la_lesson on lesson_attachments(lesson_id);
 
+create table student_lesson_progress (
+  id            uuid primary key default gen_random_uuid(),
+  school_id     uuid not null references schools(id) on delete cascade,
+  lesson_id     uuid not null references lessons(id) on delete cascade,
+  student_id    uuid not null references profiles(id) on delete cascade,
+  completed_at  timestamptz not null default now(),
+  last_viewed_at timestamptz not null default now(),
+  unique (lesson_id, student_id)
+);
+create index idx_slp_school on student_lesson_progress(school_id);
+create index idx_slp_lesson on student_lesson_progress(lesson_id);
+create index idx_slp_student on student_lesson_progress(student_id);
+
 create table attendance_records (
   id            uuid primary key default gen_random_uuid(),
   school_id     uuid not null references schools(id) on delete cascade,
@@ -602,6 +615,7 @@ alter table teacher_subject_assignments enable row level security;
 alter table timetable_entries enable row level security;
 alter table lessons enable row level security;
 alter table lesson_attachments enable row level security;
+alter table student_lesson_progress enable row level security;
 alter table attendance_records enable row level security;
 alter table homework enable row level security;
 alter table homework_questions enable row level security;
@@ -713,10 +727,60 @@ create policy lessons_write on lessons for all
   with check ( user_has_school_role(school_id, array['school_admin']::user_role[]) or teacher_id = auth.uid() );
 
 create policy la_select on lesson_attachments for select using (
-  exists (select 1 from lessons l where l.id = lesson_attachments.lesson_id)
+  exists (
+    select 1
+    from lessons l
+    where l.id = lesson_attachments.lesson_id
+      and (
+        user_has_school_role(l.school_id, array['school_admin']::user_role[])
+        or l.teacher_id = auth.uid()
+        or exists (
+          select 1
+          from class_enrollments ce
+          where ce.class_id = l.class_id
+            and (ce.student_id = auth.uid() or is_parent_of_student(ce.student_id))
+        )
+      )
+  )
 );
 create policy la_write on lesson_attachments for all using (
-  exists (select 1 from lessons l where l.id = lesson_attachments.lesson_id and (l.teacher_id = auth.uid() or user_has_school_role(l.school_id, array['school_admin']::user_role[])))
+  exists (
+    select 1
+    from lessons l
+    where l.id = lesson_attachments.lesson_id
+      and (l.teacher_id = auth.uid() or user_has_school_role(l.school_id, array['school_admin']::user_role[]))
+  )
+) with check (
+  exists (
+    select 1
+    from lessons l
+    where l.id = lesson_attachments.lesson_id
+      and (l.teacher_id = auth.uid() or user_has_school_role(l.school_id, array['school_admin']::user_role[]))
+  )
+);
+
+create policy slp_select on student_lesson_progress for select using (
+  user_has_school_role(school_id, array['school_admin']::user_role[])
+  or exists (select 1 from lessons l where l.id = student_lesson_progress.lesson_id and l.teacher_id = auth.uid())
+  or student_id = auth.uid()
+  or is_parent_of_student(student_id)
+);
+create policy slp_insert on student_lesson_progress for insert with check (
+  student_id = auth.uid()
+  and exists (
+    select 1
+    from lessons l
+    join class_enrollments ce on ce.class_id = l.class_id
+    where l.id = student_lesson_progress.lesson_id
+      and l.school_id = student_lesson_progress.school_id
+      and ce.school_id = student_lesson_progress.school_id
+      and ce.student_id = student_lesson_progress.student_id
+  )
+);
+create policy slp_update on student_lesson_progress for update using (
+  student_id = auth.uid() or user_has_school_role(school_id, array['school_admin']::user_role[])
+) with check (
+  student_id = auth.uid() or user_has_school_role(school_id, array['school_admin']::user_role[])
 );
 
 -- attendance: teacher of the lesson's class records it; student/parent read own; admin reads all
