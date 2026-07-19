@@ -3462,7 +3462,6 @@ function WorkspaceShell({
             </div>
             <div className="min-w-0">
               <p className="truncate text-xl font-bold text-foreground">Nibras</p>
-              <p className="text-xs text-muted-foreground">{ROLE_LABELS[workspace.role]}</p>
             </div>
           </div>
         </div>
