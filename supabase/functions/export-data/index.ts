@@ -8,7 +8,7 @@
 // Deploy:  supabase functions deploy export-data
 // Call:    POST /functions/v1/export-data
 //          Authorization: Bearer <caller's JWT>
-//          { "school_id": "...", "entity": "students" | "attendance" | "final_grades",
+//          { "school_id": "...", "entity": "students" | "attendance" | "final_grades" | "waitlist",
 //            "academic_year_id": "..." (optional filter) }
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -47,6 +47,13 @@ const EXPORTERS: Record<string, (schoolId: string, filters: Record<string, unkno
     const { data } = await q;
     return data ?? [];
   },
+  waitlist: async () => {
+    const { data } = await admin
+      .from("waitlist_signups")
+      .select("full_name, email, phone, source, status, contacted_at, created_at")
+      .order("created_at", { ascending: false });
+    return data ?? [];
+  },
 };
 
 Deno.serve(async (req) => {
@@ -63,11 +70,16 @@ Deno.serve(async (req) => {
     const callerId = callerData.user.id;
 
     const { school_id, entity, ...filters } = await req.json();
-    if (!school_id || !entity || !EXPORTERS[entity]) {
+    if (!entity || !EXPORTERS[entity]) {
       return json({ error: `entity must be one of: ${Object.keys(EXPORTERS).join(", ")}` }, 400);
     }
+    if (entity !== "waitlist" && !school_id) {
+      return json({ error: "school_id is required for this export" }, 400);
+    }
 
-    // Authorize: school_admin or super_admin for this school
+    // Authorize:
+    // - waitlist export => super_admin only
+    // - school exports => school_admin for that school or super_admin
     const { data: allowedRow } = await admin
       .from("user_school_roles")
       .select("role")
@@ -82,14 +94,18 @@ Deno.serve(async (req) => {
       .is("school_id", null)
       .eq("role", "super_admin")
       .maybeSingle();
-    if (!allowedRow && !superRow) return json({ error: "not authorized to export this data" }, 403);
+    if (entity === "waitlist") {
+      if (!superRow) return json({ error: "not authorized to export this data" }, 403);
+    } else if (!allowedRow && !superRow) {
+      return json({ error: "not authorized to export this data" }, 403);
+    }
 
     const rows = await EXPORTERS[entity](school_id, filters);
     const csv = toCsv(rows);
 
     // Mandatory audit log, written before the response goes out.
     await admin.from("audit_logs").insert({
-      school_id,
+      school_id: entity === "waitlist" ? null : school_id,
       actor_id: callerId,
       action: "export_data",
       entity_type: entity,

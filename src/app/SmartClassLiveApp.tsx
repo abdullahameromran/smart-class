@@ -122,6 +122,17 @@ type AuditLogRecord = {
   created_at: string;
 };
 
+type WaitlistSignup = {
+  id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  source: string;
+  status: string;
+  contacted_at: string | null;
+  created_at: string;
+};
+
 type PlatformCounts = {
   profiles: number;
   role_assignments: number;
@@ -132,6 +143,7 @@ type PlatformCounts = {
   lessons: number;
   announcements: number;
   messages: number;
+  waitlist: number;
 };
 
 type AcademicYear = {
@@ -513,6 +525,7 @@ type SuperAdminData = {
   profiles: PlatformProfile[];
   roleRows: RoleRow[];
   auditLogs: AuditLogRecord[];
+  waitlist: WaitlistSignup[];
   counts: PlatformCounts;
 };
 
@@ -1092,7 +1105,7 @@ function safeJsonParse(value: string) {
   }
 }
 
-async function downloadExport(entity: string, schoolId: string, academicYearId?: string) {
+async function downloadExport(entity: string, schoolId?: string, academicYearId?: string) {
   const headers = await getAuthHeaders();
   const response = await fetch(`${supabaseUrl}/functions/v1/export-data`, {
     method: "POST",
@@ -1303,6 +1316,7 @@ async function loadSuperAdminData() {
     profiles,
     roleRows,
     auditLogs,
+    waitlist,
     classCount,
     subjectCount,
     lessonCount,
@@ -1336,6 +1350,11 @@ async function loadSuperAdminData() {
       .select("id,school_id,actor_id,action,entity_type,entity_id,metadata,created_at")
       .order("created_at", { ascending: false })
       .limit(120),
+    supabase
+      .from("waitlist_signups")
+      .select("id,full_name,email,phone,source,status,contacted_at,created_at")
+      .order("created_at", { ascending: false })
+      .limit(200),
     fetchExactCount("classes"),
     fetchExactCount("subjects"),
     fetchExactCount("lessons"),
@@ -1351,6 +1370,7 @@ async function loadSuperAdminData() {
   const profileRows = (unwrap(profiles) as unknown) as PlatformProfile[];
   const roleRowsData = (unwrap(roleRows) as unknown) as RoleRow[];
   const auditRows = (unwrap(auditLogs) as unknown) as AuditLogRecord[];
+  const waitlistRows = (unwrap(waitlist) as unknown) as WaitlistSignup[];
   const statsBySchoolId = statsRows.reduce<Record<string, SchoolUsageStat>>((acc, row) => {
     acc[row.school_id] = row;
     return acc;
@@ -1406,6 +1426,7 @@ async function loadSuperAdminData() {
     profiles: profileRows,
     roleRows: roleRowsData,
     auditLogs: auditRows,
+    waitlist: waitlistRows,
     counts: {
       profiles: profileRows.length,
       role_assignments: roleRowsData.length,
@@ -1416,6 +1437,7 @@ async function loadSuperAdminData() {
       lessons: lessonCount,
       announcements: announcementCount,
       messages: messageCount,
+      waitlist: waitlistRows.length,
     },
   } satisfies SuperAdminData;
 }
@@ -4402,6 +4424,9 @@ function SuperAdminPortal({
   const totalParents = data.stats.reduce((sum, item) => sum + Number(item.parent_count || 0), 0);
   const activeSchools = data.stats.filter((item) => item.is_active).length;
   const activeProfiles = data.profiles.filter((item) => item.is_active).length;
+  const newWaitlistCount = data.waitlist.filter((item) => item.status === "new").length;
+  const contactedWaitlistCount = data.waitlist.filter((item) => item.contacted_at).length;
+  const recentWaitlist = data.waitlist.slice(0, 6);
   const schoolMap = byId(data.schools);
   const planMap = byId(data.plans);
   const profileMap = byId(data.profiles);
@@ -6249,7 +6274,7 @@ function SuperAdminPortal({
           <StatCard label="Role Rows" value={data.counts.role_assignments.toLocaleString()} />
           <StatCard label="Classes" value={data.counts.classes.toLocaleString()} />
           <StatCard label="Lessons" value={data.counts.lessons.toLocaleString()} />
-          <StatCard label="Plans" value={data.plans.length.toLocaleString()} />
+          <StatCard label="Waitlist" value={data.counts.waitlist.toLocaleString()} sub={`${newWaitlistCount} new leads`} />
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
@@ -6298,6 +6323,56 @@ function SuperAdminPortal({
                     </p>
                   </div>
                 ))}
+              </div>
+            </Panel>
+
+            <Panel
+              title="Waitlist Leads"
+              description="See the newest school leads from the public landing page and export them when your sales team is ready."
+              action={
+                <div className="flex gap-2">
+                  <Button variant="secondary" onClick={() => void downloadExport("waitlist")}>
+                    <Download className="w-4 h-4" />
+                    Waitlist CSV
+                  </Button>
+                </div>
+              }
+            >
+              <div className="mb-4 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl bg-muted/30 p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">New leads</p>
+                  <p className="mt-2 text-2xl font-bold text-foreground">{newWaitlistCount}</p>
+                </div>
+                <div className="rounded-2xl bg-muted/30 p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Contacted</p>
+                  <p className="mt-2 text-2xl font-bold text-foreground">{contactedWaitlistCount}</p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {recentWaitlist.length === 0 ? (
+                  <EmptyState message="No waitlist leads yet." />
+                ) : (
+                  recentWaitlist.map((lead) => (
+                    <div key={lead.id} className="rounded-2xl bg-muted/30 p-4">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-semibold">{lead.full_name}</p>
+                            <Badge tone={lead.contacted_at ? "success" : "warning"}>
+                              {lead.contacted_at ? "Contacted" : titleCaseLabel(lead.status)}
+                            </Badge>
+                          </div>
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            {lead.email} / {lead.phone}
+                          </p>
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            Joined {formatDateTime(lead.created_at)} / Source {titleCaseLabel(lead.source)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </Panel>
 
