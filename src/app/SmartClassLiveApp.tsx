@@ -3782,14 +3782,12 @@ function AuthScreen({
   onModeChange: (mode: AuthMode) => void;
   onBackHome: () => void;
 }) {
-  const commonTimezones = ["Africa/Cairo", "UTC", "Africa/Lagos", "Asia/Riyadh", "Europe/London"];
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [schoolName, setSchoolName] = useState("");
   const [schoolSlug, setSchoolSlug] = useState("");
-  const [schoolTimezone, setSchoolTimezone] = useState("Africa/Cairo");
   const [busy, setBusy] = useState(false);
   const [authAlert, setAuthAlert] = useState<{ kind: "error" | "info" | "success"; message: string } | null>(null);
 
@@ -3827,7 +3825,6 @@ function AuthScreen({
     const trimmedFirstName = firstName.trim();
     const trimmedLastName = lastName.trim();
     const trimmedEmail = email.trim().toLowerCase();
-    const trimmedTimezone = schoolTimezone.trim();
     if (!trimmedSchoolName || !trimmedFirstName || !trimmedLastName || !trimmedEmail) {
       const message = "Add the school name, admin name, and email to continue.";
       setAuthAlert({ kind: "error", message });
@@ -3845,7 +3842,7 @@ function AuthScreen({
       await publicSchoolSignup({
         schoolName: trimmedSchoolName,
         schoolSlug,
-        timezone: trimmedTimezone || "Africa/Cairo",
+        timezone: "Africa/Cairo",
         firstName: trimmedFirstName,
         lastName: trimmedLastName,
         email: trimmedEmail,
@@ -4012,13 +4009,7 @@ function AuthScreen({
                     />
                   </Field>
                   <Field label="Timezone">
-                    <Select value={schoolTimezone} onChange={(event) => setSchoolTimezone(event.target.value)}>
-                      {commonTimezones.map((timezone) => (
-                        <option key={timezone} value={timezone}>
-                          {timezone}
-                        </option>
-                      ))}
-                    </Select>
+                    <Input value="Africa/Cairo" readOnly />
                   </Field>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
