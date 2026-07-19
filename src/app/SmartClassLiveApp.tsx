@@ -3447,125 +3447,101 @@ function WorkspaceShell({
   loading: boolean;
   children: ReactNode;
 }) {
-  const useFloatingSidebar = true;
+  const activeItem = navItems.find((item) => item.id === activeView);
+  const workspaceLabel = workspace.school ? workspace.school.name : "Platform";
+  const workspaceMeta = workspace.school?.timezone ?? "Platform workspace";
+  const userLabel = fullName(profile);
 
   return (
-    <div
-      className={`min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(17,24,39,0.06),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.08),_transparent_26%)] text-foreground ${
-        useFloatingSidebar ? "" : "md:h-screen md:overflow-hidden"
-      }`}
-    >
-      <div
-        className={`mx-auto flex min-h-screen max-w-[1600px] ${
-          useFloatingSidebar ? "items-start px-4 py-4" : "md:h-full md:px-4 md:py-4"
-        }`}
-      >
-        <aside
-          className={`hidden w-80 shrink-0 md:flex md:pr-4 ${
-            useFloatingSidebar ? "md:sticky md:top-4 md:z-20 md:self-start" : ""
-          }`}
-        >
-          <div
-            className={`flex w-full flex-col rounded-[2rem] border border-border/70 bg-card/92 px-5 py-6 shadow-[0_24px_70px_rgba(15,23,42,0.12)] backdrop-blur ${
-              useFloatingSidebar
-                ? "h-[calc(100vh-2rem)] ring-1 ring-white/40"
-                : "sticky top-4 h-[calc(100vh-2rem)]"
-            }`}
-          >
-            <div className="overflow-hidden rounded-[1.75rem] border border-border/70 bg-[linear-gradient(180deg,rgba(124,92,191,0.12),rgba(255,255,255,0.88))] p-4 shadow-[0_18px_45px_rgba(15,23,42,0.08)]">
-              <div className="flex items-start gap-4">
-                <div className="shrink-0 rounded-[1.45rem] bg-white p-2.5 shadow-[0_16px_32px_rgba(15,23,42,0.12)] ring-1 ring-white/80">
-                  <img
-                    src={smartClassLogo}
-                    alt="Smart Class"
-                    className="h-14 w-14 rounded-[1rem] object-cover"
-                  />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-primary/90">Smart Class</p>
-                    <Badge tone="default">{ROLE_LABELS[workspace.role]}</Badge>
-                  </div>
-                  <h1 className="mt-3 text-[1.7rem] font-bold leading-[1.1] tracking-tight text-foreground">
-                    {workspace.schoolName}
-                  </h1>
-                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span className="inline-flex items-center gap-1 rounded-full bg-white/75 px-2.5 py-1 font-medium text-foreground/80 ring-1 ring-border/60">
-                      <Building2 className="h-3.5 w-3.5 text-primary" />
-                      {workspace.school ? workspace.school.slug : "platform"}
-                    </span>
-                    <span className="inline-flex rounded-full bg-white/65 px-2.5 py-1 font-medium ring-1 ring-border/60">
-                      {workspace.school?.timezone ?? "Platform workspace"}
-                    </span>
-                  </div>
-                </div>
-              </div>
+    <div className="min-h-screen bg-[linear-gradient(180deg,_rgba(250,247,255,0.98),_rgba(243,240,255,1))] text-foreground">
+      <aside className="hidden md:fixed md:inset-y-0 md:left-0 md:z-30 md:flex md:w-[220px] md:flex-col md:border-r md:border-border/70 md:bg-white/96 md:backdrop-blur">
+        <div className="border-b border-border/70 px-6 py-5">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-border/60">
+              <img src={smartClassLogo} alt="Nibras" className="h-8 w-8 rounded-xl object-cover" />
             </div>
-
-            <nav className="mt-6 flex-1 space-y-1 overflow-y-auto pr-1">
-              {navItems.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => onSelect(item.id)}
-                  className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition ${
-                    activeView === item.id
-                      ? "bg-primary text-white shadow-[0_16px_30px_rgba(37,99,235,0.22)]"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }`}
-                >
-                  {item.icon}
-                  {item.label}
-                </button>
-              ))}
-            </nav>
-
-            <div className="mt-5 rounded-[1.5rem] border border-border bg-muted/45 p-4">
-              <p className="text-sm font-semibold">{fullName(profile)}</p>
-              <p className="text-xs text-muted-foreground">{profile.email}</p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <Button variant="secondary" className="flex-1" onClick={onSwitchWorkspace}>
-                  Switch
-                </Button>
-                <Button variant="ghost" className="flex-1" onClick={onSignOut}>
-                  <LogOut className="w-4 h-4" />
-                  Sign out
-                </Button>
-              </div>
+            <div className="min-w-0">
+              <p className="truncate text-xl font-bold text-foreground">Nibras</p>
+              <p className="text-xs text-muted-foreground">{ROLE_LABELS[workspace.role]}</p>
             </div>
           </div>
-        </aside>
+        </div>
 
-        <main
-          className={`min-w-0 flex-1 px-4 py-4 md:rounded-[2rem] md:border md:border-border/60 md:bg-card/30 md:px-8 md:py-6 md:shadow-[0_24px_80px_rgba(15,23,42,0.08)] ${
-            useFloatingSidebar ? "self-start" : "md:h-full md:overflow-y-auto"
-          }`}
-        >
-          <div
-            className={`mb-6 flex flex-col gap-3 md:sticky md:z-10 md:-mx-2 md:rounded-[1.5rem] md:border md:border-border/60 md:bg-background/90 md:px-2 md:py-3 md:backdrop-blur md:flex-row md:items-center md:justify-between ${
-              useFloatingSidebar ? "md:top-4" : "md:top-0"
-            }`}
-          >
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-primary">{ROLE_LABELS[workspace.role]}</p>
-              <h2 className="text-2xl font-bold">{workspace.schoolName}</h2>
+        <div className="flex flex-1 flex-col overflow-hidden px-3 py-4">
+          <nav className="flex-1 space-y-1 overflow-y-auto pr-1">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => onSelect(item.id)}
+                className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-[15px] font-semibold transition ${
+                  activeView === item.id
+                    ? "bg-primary text-white shadow-[0_12px_28px_rgba(124,92,191,0.24)]"
+                    : "text-slate-600 hover:bg-secondary/70 hover:text-foreground"
+                }`}
+              >
+                <span className={activeView === item.id ? "text-white" : "text-slate-500"}>{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </nav>
+
+          <div className="mt-4 border-t border-border/70 pt-4">
+            <div className="flex items-center gap-3 rounded-2xl px-2 py-2">
+              <div className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold ${avatarTone(profile.id || userLabel)}`}>
+                {initialsFor(userLabel)}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-foreground">{userLabel}</p>
+                <p className="truncate text-xs text-muted-foreground">{ROLE_LABELS[workspace.role]}</p>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={onSwitchWorkspace}>
-                Switch view
+            <div className="mt-3 flex flex-col gap-2 px-2">
+              <Button variant="ghost" className="justify-start rounded-xl text-slate-600" onClick={onSwitchWorkspace}>
+                <RefreshCw className="h-4 w-4" />
+                Switch
               </Button>
-              <Button variant="secondary" onClick={onRefresh} disabled={loading}>
-                <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-                Refresh
-              </Button>
-              <Button variant="ghost" onClick={onSignOut}>
-                <LogOut className="w-4 h-4" />
-                Sign out
+              <Button variant="ghost" className="justify-start rounded-xl text-slate-600" onClick={onSignOut}>
+                <LogOut className="h-4 w-4" />
+                Log Out
               </Button>
             </div>
           </div>
+        </div>
+      </aside>
+
+      <main className="min-h-screen md:ml-[220px]">
+        <header className="sticky top-0 z-20 border-b border-border/70 bg-white/96 backdrop-blur">
+          <div className="flex min-h-[84px] items-center justify-between px-5 py-4 md:px-6 lg:px-8">
+            <div className="min-w-0">
+              <h1 className="truncate text-[1.75rem] font-bold tracking-tight text-foreground">
+                {activeItem?.label ?? workspaceLabel}
+              </h1>
+              <p className="mt-1 truncate text-sm text-muted-foreground">
+                {workspaceLabel} / {workspaceMeta}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <Button variant="secondary" size="icon" className="rounded-full bg-secondary/70" onClick={onRefresh} disabled={loading}>
+                <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              </Button>
+              <div className="relative flex h-11 w-11 items-center justify-center rounded-full bg-secondary/70 text-slate-600">
+                <Bell className="h-5 w-5" />
+                <span className="absolute right-0 top-0 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-white">
+                  3
+                </span>
+              </div>
+              <div className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold ${avatarTone(profile.id || userLabel)}`}>
+                {initialsFor(userLabel)}
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div className="px-5 py-6 md:px-6 lg:px-8">
           {children}
-        </main>
-      </div>
+        </div>
+      </main>
     </div>
   );
 }
