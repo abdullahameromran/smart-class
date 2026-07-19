@@ -3110,6 +3110,7 @@ function ProfileWorkspace({
   onProfileSaved: (profile: BasicProfile) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const [form, setForm] = useState({
     first_name: profile.first_name ?? "",
     last_name: profile.last_name ?? "",
@@ -3129,6 +3130,40 @@ function ProfileWorkspace({
       avatar_url: profile.avatar_url ?? "",
     });
   }, [profile.avatar_url, profile.first_name, profile.id, profile.last_name, profile.phone]);
+
+  const uploadAvatar = async (file?: File | null) => {
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      onNotify("error", "Please choose an image file only.");
+      return;
+    }
+
+    try {
+      setBusy(true);
+      const fileExtension = file.name.includes(".") ? file.name.split(".").pop()?.toLowerCase() ?? "jpg" : "jpg";
+      const objectPath = `${profile.id}/avatar-${Date.now()}.${fileExtension}`;
+
+      unwrap(
+        await supabase.storage.from("avatars").upload(objectPath, file, {
+          cacheControl: "3600",
+          upsert: true,
+          contentType: file.type,
+        }),
+      );
+
+      const { data } = supabase.storage.from("avatars").getPublicUrl(objectPath);
+      setForm((prev) => ({ ...prev, avatar_url: data.publicUrl }));
+      onNotify("success", "Avatar uploaded. Save profile to keep it.");
+    } catch (error) {
+      onNotify("error", error instanceof Error ? error.message : "Could not upload the avatar.");
+    } finally {
+      setBusy(false);
+      if (avatarInputRef.current) {
+        avatarInputRef.current.value = "";
+      }
+    }
+  };
 
   const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -3213,6 +3248,22 @@ function ProfileWorkspace({
                   )}
                   <p className="mt-4 text-sm font-semibold text-foreground">{fullName(profile)}</p>
                   <p className="mt-1 text-xs text-muted-foreground">{ROLE_LABELS[workspace.role]}</p>
+                  <input
+                    ref={avatarInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(event) => void uploadAvatar(event.target.files?.[0] ?? null)}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="mt-4"
+                    onClick={() => avatarInputRef.current?.click()}
+                    disabled={busy}
+                  >
+                    {busy ? "Uploading..." : "Upload avatar"}
+                  </Button>
                 </div>
               </div>
 
@@ -3231,11 +3282,16 @@ function ProfileWorkspace({
                 </Field>
                 <div className="sm:col-span-2">
                   <Field label="Avatar image URL">
-                    <Input
-                      value={form.avatar_url}
-                      placeholder="https://..."
-                      onChange={(event) => setForm((prev) => ({ ...prev, avatar_url: event.target.value }))}
-                    />
+                    <div className="flex flex-col gap-3 sm:flex-row">
+                      <Input
+                        value={form.avatar_url}
+                        placeholder="https://..."
+                        onChange={(event) => setForm((prev) => ({ ...prev, avatar_url: event.target.value }))}
+                      />
+                      <Button type="button" variant="secondary" onClick={() => avatarInputRef.current?.click()} disabled={busy}>
+                        Upload
+                      </Button>
+                    </div>
                   </Field>
                 </div>
               </div>
