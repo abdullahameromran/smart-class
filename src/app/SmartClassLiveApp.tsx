@@ -3422,6 +3422,41 @@ async function joinWaitlist({
   );
 }
 
+async function publicSchoolSignup({
+  schoolName,
+  schoolSlug,
+  timezone,
+  firstName,
+  lastName,
+  email,
+  password,
+}: {
+  schoolName: string;
+  schoolSlug?: string;
+  timezone: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  password: string;
+}) {
+  return invokeFunctionJson<{
+    status: string;
+    school_id: string;
+    school_name: string;
+    slug: string;
+    admin_user_id: string;
+    plan_name: string;
+  }>("public-school-signup", {
+    school_name: schoolName.trim(),
+    slug: schoolSlug?.trim() || undefined,
+    timezone: timezone.trim(),
+    admin_first_name: firstName.trim(),
+    admin_last_name: lastName.trim(),
+    admin_email: email.trim().toLowerCase(),
+    admin_password: password,
+  });
+}
+
 function slugify(value: string) {
   return value
     .trim()
@@ -3747,10 +3782,14 @@ function AuthScreen({
   onModeChange: (mode: AuthMode) => void;
   onBackHome: () => void;
 }) {
+  const commonTimezones = ["Africa/Cairo", "UTC", "Africa/Lagos", "Asia/Riyadh", "Europe/London"];
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [schoolName, setSchoolName] = useState("");
+  const [schoolSlug, setSchoolSlug] = useState("");
+  const [schoolTimezone, setSchoolTimezone] = useState("Africa/Cairo");
   const [busy, setBusy] = useState(false);
   const [authAlert, setAuthAlert] = useState<{ kind: "error" | "info" | "success"; message: string } | null>(null);
 
@@ -3784,6 +3823,17 @@ function AuthScreen({
   const signUp = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setAuthAlert(null);
+    const trimmedSchoolName = schoolName.trim();
+    const trimmedFirstName = firstName.trim();
+    const trimmedLastName = lastName.trim();
+    const trimmedEmail = email.trim().toLowerCase();
+    const trimmedTimezone = schoolTimezone.trim();
+    if (!trimmedSchoolName || !trimmedFirstName || !trimmedLastName || !trimmedEmail) {
+      const message = "Add the school name, admin name, and email to continue.";
+      setAuthAlert({ kind: "error", message });
+      onNotify("error", message);
+      return;
+    }
     if (password.length < 6) {
       const message = "Use a password with at least 6 characters.";
       setAuthAlert({ kind: "error", message });
@@ -3791,33 +3841,39 @@ function AuthScreen({
       return;
     }
     setBusy(true);
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: window.location.origin,
-        data: {
-          first_name: firstName,
-          last_name: lastName,
-        },
-      },
-    });
-    setBusy(false);
-    if (error) {
-      const message = getAuthErrorMessage(error);
-      setAuthAlert({ kind: "error", message });
-      onNotify("error", message);
-      return;
-    }
-    if (data.session) {
-      const message = "Account created. If this is a fresh project, continue with bootstrap after sign-in.";
+    try {
+      await publicSchoolSignup({
+        schoolName: trimmedSchoolName,
+        schoolSlug,
+        timezone: trimmedTimezone || "Africa/Cairo",
+        firstName: trimmedFirstName,
+        lastName: trimmedLastName,
+        email: trimmedEmail,
+        password,
+      });
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email: trimmedEmail,
+        password,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      const message = `School created successfully. Welcome to ${trimmedSchoolName}.`;
       setAuthAlert({ kind: "success", message });
       onNotify("success", message);
-      return;
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : getAuthErrorMessage(error as { message?: string | null; code?: string | null } | null);
+      setAuthAlert({ kind: "error", message });
+      onNotify("error", message);
+    } finally {
+      setBusy(false);
     }
-    setAuthAlert({ kind: "info", message: "Account created. Check your email to confirm, then sign in." });
-    onNotify("info", "Account created. Check your email to confirm, then sign in.");
-    onModeChange("signin");
   };
 
   const sendMagicLink = async () => {
@@ -3876,11 +3932,11 @@ function AuthScreen({
           <div className="mt-8 rounded-2xl bg-muted/40 p-5 transition-all duration-300 hover:bg-muted/55 hover:shadow-md">
             <p className="text-sm font-semibold text-foreground">First time opening Smart Class?</p>
             <p className="mt-2 text-sm text-muted-foreground">
-              1. Create an account here.
+              1. Create your school account here.
               <br />
-              2. Sign in.
+              2. Your school workspace is created automatically.
               <br />
-              3. If no access appears yet, use the one-time setup button on the next screen.
+              3. Sign in and start using your School Admin dashboard.
             </p>
           </div>
         </div>
@@ -3911,11 +3967,11 @@ function AuthScreen({
             </button>
           </div>
 
-          <h2 className="mt-6 text-2xl font-bold">{mode === "signin" ? "Welcome back" : "Create account"}</h2>
+          <h2 className="mt-6 text-2xl font-bold">{mode === "signin" ? "Welcome back" : "Create your school"}</h2>
           <p className="mt-2 text-sm text-muted-foreground">
             {mode === "signin"
               ? "Use your invited account. Magic link is helpful if you do not have a password yet."
-              : "Create a new login. If this is the first account in a new project, you can bootstrap the first platform admin after signing in."}
+              : "Create the school, create the first school admin, and open your workspace in one smooth signup flow."}
           </p>
 
           {authAlert ? (
@@ -3935,24 +3991,55 @@ function AuthScreen({
 
           <form className="mt-6 space-y-4" onSubmit={mode === "signin" ? signIn : signUp}>
             {mode === "signup" ? (
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="First name">
-                  <Input value={firstName} onChange={(event) => setFirstName(event.target.value)} />
+              <>
+                <Field label="School name">
+                  <Input
+                    value={schoolName}
+                    placeholder="Riverside International School"
+                    onChange={(event) => {
+                      const nextName = event.target.value;
+                      setSchoolName(nextName);
+                      setSchoolSlug((prev) => (prev ? prev : slugify(nextName)));
+                    }}
+                  />
                 </Field>
-                <Field label="Last name">
-                  <Input value={lastName} onChange={(event) => setLastName(event.target.value)} />
-                </Field>
-              </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="School slug (optional)">
+                    <Input
+                      value={schoolSlug}
+                      placeholder="riverside-international"
+                      onChange={(event) => setSchoolSlug(slugify(event.target.value))}
+                    />
+                  </Field>
+                  <Field label="Timezone">
+                    <Select value={schoolTimezone} onChange={(event) => setSchoolTimezone(event.target.value)}>
+                      {commonTimezones.map((timezone) => (
+                        <option key={timezone} value={timezone}>
+                          {timezone}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Admin first name">
+                    <Input value={firstName} onChange={(event) => setFirstName(event.target.value)} />
+                  </Field>
+                  <Field label="Admin last name">
+                    <Input value={lastName} onChange={(event) => setLastName(event.target.value)} />
+                  </Field>
+                </div>
+              </>
             ) : null}
-            <Field label="Email">
+            <Field label={mode === "signin" ? "Email" : "Admin email"}>
               <Input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required />
             </Field>
-            <Field label="Password">
+            <Field label={mode === "signin" ? "Password" : "Password for the first school admin"}>
               <Input value={password} onChange={(event) => setPassword(event.target.value)} type="password" required />
             </Field>
             <div className="flex flex-wrap gap-3 pt-2">
               <Button type="submit" disabled={busy || loading} className="min-w-[170px] flex-1">
-                {busy ? (mode === "signin" ? "Signing in..." : "Creating account...") : mode === "signin" ? "Sign in" : "Create account"}
+                {busy ? (mode === "signin" ? "Signing in..." : "Creating school...") : mode === "signin" ? "Sign in" : "Create school account"}
               </Button>
               <Button type="button" variant="secondary" onClick={sendMagicLink} disabled={busy || loading}>
                 Send magic link
