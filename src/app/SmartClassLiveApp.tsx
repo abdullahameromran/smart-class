@@ -1839,7 +1839,6 @@ async function loadTeacherData(schoolId: string, currentUserId: string) {
     ),
   ]);
 
-  const profileMap = byId(teacherProfiles);
   const classRows = (unwrap(classes) as unknown) as ClassRecord[];
   const classMap = byId(classRows);
   const subjectRows = (unwrap(subjects) as unknown) as SubjectRecord[];
@@ -1859,9 +1858,30 @@ async function loadTeacherData(schoolId: string, currentUserId: string) {
     (unwrap(testSubmissions) as unknown) as TestSubmission[],
     (unwrap(testAnswers) as unknown) as TestAnswer[],
   );
+  const visibleClassIds = unique([
+    ...assignedClassIds,
+    ...lessonRows.map((lesson) => lesson.class_id),
+    ...testRows.map((test) => test.class_id),
+    ...homeworkBundles
+      .map((bundle) => bundle.lesson?.class_id ?? null)
+      .filter((classId): classId is string => Boolean(classId)),
+  ]);
+  const profileMap = byId(
+    await fetchProfilesByIds(
+      unique([
+        ...((unwrap(enrollments) as unknown) as ClassEnrollment[])
+          .filter((row) => visibleClassIds.includes(row.class_id))
+          .map((row) => row.student_id),
+        ...messages.map((message) => message.sender_id),
+        ...recipients.map((recipient) => recipient.recipient_id),
+        ...announcements.map((announcement) => announcement.author_id),
+        currentUserId,
+      ]),
+    ),
+  );
 
   const studentRows = ((unwrap(enrollments) as unknown) as ClassEnrollment[])
-    .filter((row) => assignedClassIds.includes(row.class_id))
+    .filter((row) => visibleClassIds.includes(row.class_id))
     .map<StudentSummary>((row) => ({
       userId: row.student_id,
       name: fullName(profileMap[row.student_id]),
