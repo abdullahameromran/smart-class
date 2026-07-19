@@ -5365,26 +5365,72 @@ function SuperAdminPortal({
             </div>
           </Panel>
 
-          <Panel title="Recent Schools" description="Open a school card to get a more spacious school-level workspace.">
-            <div className="space-y-3">
-              {allSchoolDirectory.slice(0, 5).map((row) => (
-                <button
-                  key={row.school_id}
-                  type="button"
-                  onClick={() => openSchoolDetail(row.school_id)}
-                  className="flex w-full items-center justify-between rounded-2xl border border-border bg-muted/25 p-4 text-left transition hover:border-primary/30 hover:bg-card"
-                >
-                  <div>
-                    <p className="font-semibold">{row.school_name}</p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {row.student_count} students / {row.teacher_count} teachers
-                    </p>
-                  </div>
-                  <Badge tone={row.is_active ? "success" : "warning"}>{row.is_active ? "Active" : "Inactive"}</Badge>
-                </button>
-              ))}
-            </div>
-          </Panel>
+          <div className="space-y-6">
+            <Panel title="Recent Schools" description="Open a school card to get a more spacious school-level workspace.">
+              <div className="space-y-3">
+                {allSchoolDirectory.slice(0, 5).map((row) => (
+                  <button
+                    key={row.school_id}
+                    type="button"
+                    onClick={() => openSchoolDetail(row.school_id)}
+                    className="flex w-full items-center justify-between rounded-2xl border border-border bg-muted/25 p-4 text-left transition hover:border-primary/30 hover:bg-card"
+                  >
+                    <div>
+                      <p className="font-semibold">{row.school_name}</p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {row.student_count} students / {row.teacher_count} teachers
+                      </p>
+                    </div>
+                    <Badge tone={row.is_active ? "success" : "warning"}>{row.is_active ? "Active" : "Inactive"}</Badge>
+                  </button>
+                ))}
+              </div>
+            </Panel>
+
+            <Panel
+              title="Waitlist Leads"
+              description="See the newest schools interested from the public landing page and export them for follow-up."
+              action={
+                <Button variant="secondary" onClick={() => void downloadExport("waitlist")}>
+                  <Download className="w-4 h-4" />
+                  Waitlist CSV
+                </Button>
+              }
+            >
+              <div className="mb-4 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl bg-muted/30 p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">All leads</p>
+                  <p className="mt-2 text-2xl font-bold text-foreground">{data.counts.waitlist}</p>
+                </div>
+                <div className="rounded-2xl bg-muted/30 p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">New leads</p>
+                  <p className="mt-2 text-2xl font-bold text-foreground">{newWaitlistCount}</p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {recentWaitlist.length === 0 ? (
+                  <EmptyState message="No waitlist leads yet." />
+                ) : (
+                  recentWaitlist.map((lead) => (
+                    <div key={lead.id} className="rounded-2xl border border-border bg-muted/25 p-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-semibold">{lead.full_name}</p>
+                        <Badge tone={lead.contacted_at ? "success" : "warning"}>
+                          {lead.contacted_at ? "Contacted" : titleCaseLabel(lead.status)}
+                        </Badge>
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        {lead.email} / {lead.phone}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Joined {formatDateTime(lead.created_at)} / Source {titleCaseLabel(lead.source)}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Panel>
+          </div>
         </div>
 
         <div className="grid gap-4 xl:grid-cols-3">
