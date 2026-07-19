@@ -3752,9 +3752,19 @@ function AuthScreen({
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [authAlert, setAuthAlert] = useState<{ kind: "error" | "info" | "success"; message: string } | null>(null);
+
+  const getAuthErrorMessage = (error: { message?: string | null; code?: string | null } | null) => {
+    if (!error) return "Something went wrong. Please try again.";
+    if (error.code === "invalid_credentials" || error.message === "Invalid login credentials") {
+      return "Incorrect email or password. Please try again.";
+    }
+    return error.message || "Something went wrong. Please try again.";
+  };
 
   const signIn = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setAuthAlert(null);
     setBusy(true);
     const { error } = await supabase.auth.signInWithPassword({
       email,
@@ -3762,16 +3772,22 @@ function AuthScreen({
     });
     setBusy(false);
     if (error) {
-      onNotify("error", error.message);
+      const message = getAuthErrorMessage(error);
+      setAuthAlert({ kind: "error", message });
+      onNotify("error", message);
       return;
     }
+    setAuthAlert({ kind: "success", message: "Signed in successfully." });
     onNotify("success", "Signed in successfully.");
   };
 
   const signUp = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setAuthAlert(null);
     if (password.length < 6) {
-      onNotify("error", "Use a password with at least 6 characters.");
+      const message = "Use a password with at least 6 characters.";
+      setAuthAlert({ kind: "error", message });
+      onNotify("error", message);
       return;
     }
     setBusy(true);
@@ -3788,22 +3804,30 @@ function AuthScreen({
     });
     setBusy(false);
     if (error) {
-      onNotify("error", error.message);
+      const message = getAuthErrorMessage(error);
+      setAuthAlert({ kind: "error", message });
+      onNotify("error", message);
       return;
     }
     if (data.session) {
-      onNotify("success", "Account created. If this is a fresh project, continue with bootstrap after sign-in.");
+      const message = "Account created. If this is a fresh project, continue with bootstrap after sign-in.";
+      setAuthAlert({ kind: "success", message });
+      onNotify("success", message);
       return;
     }
+    setAuthAlert({ kind: "info", message: "Account created. Check your email to confirm, then sign in." });
     onNotify("info", "Account created. Check your email to confirm, then sign in.");
     onModeChange("signin");
   };
 
   const sendMagicLink = async () => {
     if (!email.trim()) {
-      onNotify("error", "Enter an email first.");
+      const message = "Enter an email first.";
+      setAuthAlert({ kind: "error", message });
+      onNotify("error", message);
       return;
     }
+    setAuthAlert(null);
     setBusy(true);
     const { error } = await supabase.auth.signInWithOtp({
       email,
@@ -3813,9 +3837,12 @@ function AuthScreen({
     });
     setBusy(false);
     if (error) {
-      onNotify("error", error.message);
+      const message = getAuthErrorMessage(error);
+      setAuthAlert({ kind: "error", message });
+      onNotify("error", message);
       return;
     }
+    setAuthAlert({ kind: "info", message: "Magic link sent. Check your inbox." });
     onNotify("info", "Magic link sent. Check your inbox.");
   };
 
@@ -3890,6 +3917,21 @@ function AuthScreen({
               ? "Use your invited account. Magic link is helpful if you do not have a password yet."
               : "Create a new login. If this is the first account in a new project, you can bootstrap the first platform admin after signing in."}
           </p>
+
+          {authAlert ? (
+            <div
+              role="alert"
+              className={`mt-5 rounded-2xl border px-4 py-3 text-sm font-medium ${
+                authAlert.kind === "error"
+                  ? "border-red-200 bg-red-50 text-red-800"
+                  : authAlert.kind === "success"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-blue-200 bg-blue-50 text-blue-800"
+              }`}
+            >
+              {authAlert.message}
+            </div>
+          ) : null}
 
           <form className="mt-6 space-y-4" onSubmit={mode === "signin" ? signIn : signUp}>
             {mode === "signup" ? (
