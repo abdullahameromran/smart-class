@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { hasSupabaseEnv, supabase, supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
 import smartClassLogo from "@/IMG-20260716-WA0004.jpg";
+import NibrasLandingPage from "./NibrasLandingPage";
 
 type UserRole = "super_admin" | "school_admin" | "teacher" | "student" | "parent";
 type AuthMode = "signin" | "signup";
@@ -14251,7 +14252,7 @@ export default function SmartClassLiveApp() {
 
   if (!session) {
     if (pathname === "/") {
-      return <LandingPage onLogin={() => navigateTo("/login")} onSignup={() => navigateTo("/signup")} onNotify={notify} />;
+      return <NibrasLandingPage />;
     }
 
     return (
