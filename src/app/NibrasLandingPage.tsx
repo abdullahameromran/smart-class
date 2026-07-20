@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { ImageWithFallback } from "@/app/components/figma/ImageWithFallback";
+import { supabase } from "@/lib/supabase";
 import nibrasLogo from "@/imports/WhatsApp_Image_2026-07-16_at_3.02.45_PM.jpeg";
 import * as AccordionPrimitive from "@radix-ui/react-accordion";
 import {
@@ -76,6 +77,37 @@ function useInView(threshold = 0.2) {
   return { ref, inView };
 }
 
+async function saveSchoolDemoRequest(payload: {
+  schoolName: string;
+  directorName: string;
+  phone: string;
+  email: string;
+  address: string;
+  governorate: string;
+  studentCount: string;
+  schoolType: string;
+  message: string;
+  agree: boolean;
+}) {
+  const { error } = await supabase.from("school_demo_requests").insert({
+    school_name: payload.schoolName.trim(),
+    director_name: payload.directorName.trim(),
+    phone: payload.phone.trim(),
+    email: payload.email.trim() ? payload.email.trim().toLowerCase() : null,
+    address: payload.address.trim() || null,
+    governorate: payload.governorate.trim() || null,
+    student_count: payload.studentCount.trim() || null,
+    school_type: payload.schoolType.trim() || null,
+    message: payload.message.trim() || null,
+    agreed_to_contact: payload.agree,
+    source: "landing_page_modal",
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
 // ─── Lead Form Modal ───────────────────────────────────────────
 function LeadFormModal({ onClose }: { onClose: () => void }) {
   const [form, setForm] = useState({
@@ -84,6 +116,8 @@ function LeadFormModal({ onClose }: { onClose: () => void }) {
     message: "", agree: false,
   });
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const governorates = [
     "القاهرة", "الجيزة", "الإسكندرية", "الدقهلية", "البحر الأحمر",
@@ -93,9 +127,89 @@ function LeadFormModal({ onClose }: { onClose: () => void }) {
     "جنوب سيناء", "كفر الشيخ", "مطروح", "الأقصر", "قنا", "شمال سيناء",
   ];
 
-  function handleSubmit(e: React.FormEvent) {
+  function normalizeText(value: string, maxLength: number) {
+    return value.replace(/\s{2,}/g, " ").trimStart().slice(0, maxLength);
+  }
+
+  function handleFieldChange(key: string, value: string) {
+    setForm(f => {
+      if (key === "phone") {
+        return { ...f, phone: value.replace(/\D/g, "").slice(0, 11) };
+      }
+
+      if (key === "schoolName" || key === "directorName") {
+        return { ...f, [key]: normalizeText(value, 150) };
+      }
+
+      if (key === "address") {
+        return { ...f, address: normalizeText(value, 255) };
+      }
+
+      if (key === "email") {
+        return { ...f, email: value.trimStart().slice(0, 255) };
+      }
+
+      if (key === "message") {
+        return { ...f, message: value.slice(0, 1000) };
+      }
+
+      return { ...f, [key]: value };
+    });
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setSubmitted(true);
+    setSubmitError(null);
+
+    const schoolName = form.schoolName.trim();
+    const directorName = form.directorName.trim();
+    const phoneDigits = form.phone.replace(/\D/g, "");
+    const emailValue = form.email.trim();
+
+    if (schoolName.length < 3) {
+      setSubmitError("يرجى إدخال اسم مدرسة واضح لا يقل عن 3 أحرف.");
+      return;
+    }
+
+    if (directorName.length < 3) {
+      setSubmitError("يرجى إدخال اسم مدير المدرسة بشكل صحيح.");
+      return;
+    }
+
+    if (phoneDigits.length !== 11) {
+      setSubmitError("رقم الهاتف يجب أن يتكون من 11 رقمًا فقط.");
+      return;
+    }
+
+    if (emailValue && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue)) {
+      setSubmitError("يرجى إدخال بريد إلكتروني صحيح.");
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      await saveSchoolDemoRequest({
+        ...form,
+        schoolName,
+        directorName,
+        phone: phoneDigits,
+        email: emailValue,
+        address: form.address.trim(),
+        governorate: form.governorate.trim(),
+        studentCount: form.studentCount.trim(),
+        schoolType: form.schoolType.trim(),
+        message: form.message.trim(),
+      });
+      setSubmitted(true);
+    } catch (error) {
+      setSubmitError(
+        error instanceof Error
+          ? error.message
+          : "تعذر حفظ بيانات المدرسة الآن. يرجى المحاولة مرة أخرى.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -263,12 +377,26 @@ function LeadFormModal({ onClose }: { onClose: () => void }) {
               </label>
             </div>
 
+            {submitError && (
+              <div
+                className="mt-4 rounded-2xl border px-4 py-3 text-sm font-medium"
+                style={{
+                  borderColor: "rgba(239,68,68,0.16)",
+                  background: "rgba(254,242,242,0.95)",
+                  color: "#b91c1c",
+                }}
+              >
+                {submitError}
+              </div>
+            )}
+
             <button
               type="submit"
-              className="mt-6 w-full py-4 rounded-2xl font-bold text-lg text-white transition-all hover:opacity-90 hover:shadow-lg"
+              disabled={submitting}
+              className="mt-6 w-full py-4 rounded-2xl font-bold text-lg text-white transition-all hover:opacity-90 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-70"
               style={{ background: `linear-gradient(135deg, ${PURPLE_DARK}, ${PURPLE})` }}
             >
-              أرسل بيانات المدرسة ←
+              {submitting ? "جاري إرسال البيانات..." : "أرسل بيانات المدرسة ←"}
             </button>
 
             <p className="text-center text-xs mt-3" style={{ color: "#9ca3af" }}>
