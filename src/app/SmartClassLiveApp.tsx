@@ -123,17 +123,6 @@ type AuditLogRecord = {
   created_at: string;
 };
 
-type WaitlistSignup = {
-  id: string;
-  full_name: string;
-  email: string;
-  phone: string;
-  source: string;
-  status: string;
-  contacted_at: string | null;
-  created_at: string;
-};
-
 type SchoolDemoRequest = {
   id: string;
   school_name: string;
@@ -161,7 +150,6 @@ type WaitlistLead = {
   status: string;
   contacted_at: string | null;
   created_at: string;
-  lead_kind: "waitlist" | "school_demo";
   school_name?: string | null;
   director_name?: string | null;
 };
@@ -1161,7 +1149,9 @@ async function downloadExport(entity: string, schoolId?: string, academicYearId?
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `${entity}-${new Date().toISOString().slice(0, 10)}.csv`;
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const fileNameMatch = disposition.match(/filename="?([^"]+)"?/i);
+  link.download = fileNameMatch?.[1] ?? `${entity}-${new Date().toISOString().slice(0, 10)}.xls`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -1349,7 +1339,6 @@ async function loadSuperAdminData() {
     profiles,
     roleRows,
     auditLogs,
-    waitlist,
     schoolDemoRequests,
     classCount,
     subjectCount,
@@ -1385,11 +1374,6 @@ async function loadSuperAdminData() {
       .order("created_at", { ascending: false })
       .limit(120),
     supabase
-      .from("waitlist_signups")
-      .select("id,full_name,email,phone,source,status,contacted_at,created_at")
-      .order("created_at", { ascending: false })
-      .limit(200),
-    supabase
       .from("school_demo_requests")
       .select("id,school_name,director_name,phone,email,address,governorate,student_count,school_type,message,agreed_to_contact,source,status,contacted_at,created_at")
       .order("created_at", { ascending: false })
@@ -1409,10 +1393,9 @@ async function loadSuperAdminData() {
   const profileRows = (unwrap(profiles) as unknown) as PlatformProfile[];
   const roleRowsData = (unwrap(roleRows) as unknown) as RoleRow[];
   const auditRows = (unwrap(auditLogs) as unknown) as AuditLogRecord[];
-  const waitlistRows = (unwrap(waitlist) as unknown) as WaitlistSignup[];
   const schoolDemoRows = (unwrap(schoolDemoRequests) as unknown) as SchoolDemoRequest[];
-  const waitlistLeads = [
-    ...schoolDemoRows.map<WaitlistLead>((row) => ({
+  const waitlistLeads = schoolDemoRows
+    .map<WaitlistLead>((row) => ({
       id: row.id,
       full_name: row.school_name,
       email: row.email ?? "No email provided",
@@ -1421,17 +1404,10 @@ async function loadSuperAdminData() {
       status: row.status,
       contacted_at: row.contacted_at,
       created_at: row.created_at,
-      lead_kind: "school_demo",
       school_name: row.school_name,
       director_name: row.director_name,
-    })),
-    ...waitlistRows.map<WaitlistLead>((row) => ({
-      ...row,
-      lead_kind: "waitlist",
-      school_name: null,
-      director_name: null,
-    })),
-  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    }))
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   const statsBySchoolId = statsRows.reduce<Record<string, SchoolUsageStat>>((acc, row) => {
     acc[row.school_id] = row;
     return acc;
@@ -3637,11 +3613,13 @@ async function joinWaitlist({
   phone: string;
 }) {
   unwrap(
-    await supabase.from("waitlist_signups").insert({
-      full_name: fullName.trim(),
+    await supabase.from("school_demo_requests").insert({
+      school_name: fullName.trim(),
+      director_name: fullName.trim(),
       email: email.trim().toLowerCase(),
       phone: phone.trim(),
-      source: "landing_page",
+      agreed_to_contact: true,
+      source: "legacy_waitlist",
     }),
   );
 }

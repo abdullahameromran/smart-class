@@ -48,36 +48,26 @@ const EXPORTERS: Record<string, (schoolId: string, filters: Record<string, unkno
     return data ?? [];
   },
   waitlist: async () => {
-    const { data: waitlistRows } = await admin
-      .from("waitlist_signups")
-      .select("full_name, email, phone, source, status, contacted_at, created_at")
-      .order("created_at", { ascending: false });
     const { data: schoolDemoRows } = await admin
       .from("school_demo_requests")
       .select("school_name, director_name, phone, email, governorate, student_count, school_type, source, status, contacted_at, created_at")
       .order("created_at", { ascending: false });
 
-    return [
-      ...((schoolDemoRows ?? []).map((row) => ({
-        lead_type: "school_demo",
-        full_name: row.school_name,
-        school_name: row.school_name,
-        director_name: row.director_name,
-        email: row.email ?? "",
-        phone: row.phone,
-        governorate: row.governorate ?? "",
-        student_count: row.student_count ?? "",
-        school_type: row.school_type ?? "",
-        source: row.source,
-        status: row.status,
-        contacted_at: row.contacted_at,
-        created_at: row.created_at,
-      }))),
-      ...((waitlistRows ?? []).map((row) => ({
-        lead_type: "waitlist",
-        ...row,
-      }))),
-    ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return ((schoolDemoRows ?? []).map((row) => ({
+      lead_type: "school_demo",
+      full_name: row.school_name,
+      school_name: row.school_name,
+      director_name: row.director_name,
+      email: row.email ?? "",
+      phone: row.phone,
+      governorate: row.governorate ?? "",
+      student_count: row.student_count ?? "",
+      school_type: row.school_type ?? "",
+      source: row.source,
+      status: row.status,
+      contacted_at: row.contacted_at,
+      created_at: row.created_at,
+    }))).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   },
 };
 
@@ -126,7 +116,7 @@ Deno.serve(async (req) => {
     }
 
     const rows = await EXPORTERS[entity](school_id, filters);
-    const csv = toCsv(rows);
+    const workbook = toSpreadsheet(rows, entity);
 
     // Mandatory audit log, written before the response goes out.
     await admin.from("audit_logs").insert({
@@ -137,11 +127,11 @@ Deno.serve(async (req) => {
       metadata: { row_count: rows.length, filters },
     });
 
-    return new Response(csv, {
+    return new Response("\uFEFF" + workbook, {
       status: 200,
       headers: {
-        "Content-Type": "text/csv",
-        "Content-Disposition": `attachment; filename="${entity}-export.csv"`,
+        "Content-Type": "application/vnd.ms-excel; charset=utf-8",
+        "Content-Disposition": `attachment; filename=\"${entity}-export.xls\"`,
         ...corsHeaders,
       },
     });
@@ -150,29 +140,114 @@ Deno.serve(async (req) => {
   }
 });
 
-function toCsv(rows: any[]): string {
-  const normalizedRows = rows.flatMap((row) => (Array.isArray(row) ? row : [row])).filter(Boolean);
-  if (normalizedRows.length === 0) return "";
-  const flat = normalizedRows.map(flatten);
-  const headers = Array.from(new Set(flat.flatMap((r) => Object.keys(r))));
-  const lines = [headers.join(",")];
-  for (const row of flat) {
-    lines.push(headers.map((h) => JSON.stringify(row[h] ?? "")).join(","));
-  }
-  return lines.join("\n");
-}
+// ---------------------------------------------------------------------------
+// CSV generation
+//
+// Two bugs used to live here:
+//  1. Cells were written with JSON.stringify(), which quotes strings but
+//     escapes embedded quotes as `\"` instead of the CSV-standard `""`.
+//     Any field containing a comma or quote (a name, address, note, etc.)
+//     broke the column count for that row, since spreadsheet apps treat an
+//     unescaped internal comma as a new column boundary. That's what made
+//     rows look like they had extra/duplicated, numbered-looking columns.
+//  2. The header list was built from a Set populated by scanning every row,
+//     so column order could differ depending on which row a field first
+//     appeared in, compounding the misalignment.
+//
+// Fixed by: proper RFC4180 escaping (quote a field only when it contains a
+// comma/quote/newline, double up internal quotes), a stable first-seen
+// header order, and safe handling of Date objects and nested arrays (which
+// previously could get silently wiped or dumped as raw, unescaped `[...]`
+// text by the old recursive flatten()).
+// ---------------------------------------------------------------------------
 
 function flatten(obj: Record<string, unknown>, prefix = ""): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
     const key = prefix ? `${prefix}.${k}` : k;
-    if (v && typeof v === "object" && !Array.isArray(v)) {
+    if (v && typeof v === "object" && !Array.isArray(v) && !(v instanceof Date)) {
       Object.assign(out, flatten(v as Record<string, unknown>, key));
     } else {
       out[key] = v;
     }
   }
   return out;
+}
+
+function toSpreadsheet(rows: any[], sheetName: string): string {
+  const normalizedRows = rows.flatMap((row) => (Array.isArray(row) ? row : [row])).filter(Boolean);
+  const safeSheetName = sheetName.replace(/[^a-zA-Z0-9_-]/g, "_") || "Export";
+  if (normalizedRows.length === 0) {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+  <Worksheet ss:Name="${escapeXml(safeSheetName)}">
+    <Table />
+  </Worksheet>
+</Workbook>`;
+  }
+
+  const flat = normalizedRows.map((r) => flatten(r));
+
+  const headers: string[] = [];
+  const seenHeaders = new Set<string>();
+  for (const row of flat) {
+    for (const key of Object.keys(row)) {
+      if (!seenHeaders.has(key)) {
+        seenHeaders.add(key);
+        headers.push(key);
+      }
+    }
+  }
+
+  const headerXml = headers
+    .map((header) => `        <Cell><Data ss:Type="String">${escapeXml(header)}</Data></Cell>`)
+    .join("\n");
+
+  const rowXml = flat
+    .map((row) => {
+      const cells = headers
+        .map((header) => `        <Cell><Data ss:Type="String">${escapeXml(formatCellValue(row[header]))}</Data></Cell>`)
+        .join("\n");
+      return `      <Row>\n${cells}\n      </Row>`;
+    })
+    .join("\n");
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+  <Worksheet ss:Name="${escapeXml(safeSheetName)}">
+    <Table>
+      <Row>
+${headerXml}
+      </Row>
+${rowXml}
+    </Table>
+  </Worksheet>
+</Workbook>`;
+}
+
+function formatCellValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map((item) => formatCellValue(item)).join("; ");
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
 const corsHeaders = {
