@@ -278,7 +278,36 @@ function LeadFormModal({ onClose }: { onClose: () => void }) {
                     type={type}
                     required={required}
                     value={(form as any)[key]}
-                    onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                    onChange={e => handleFieldChange(key, e.target.value)}
+                    inputMode={key === "phone" ? "numeric" : key === "email" ? "email" : "text"}
+                    autoComplete={
+                      key === "schoolName"
+                        ? "organization"
+                        : key === "directorName"
+                          ? "name"
+                          : key === "phone"
+                            ? "tel-national"
+                            : key === "email"
+                              ? "email"
+                              : key === "address"
+                                ? "street-address"
+                                : "off"
+                    }
+                    maxLength={
+                      key === "phone"
+                        ? 11
+                        : key === "schoolName" || key === "directorName"
+                          ? 150
+                          : key === "email"
+                            ? 255
+                            : key === "address"
+                              ? 255
+                              : undefined
+                    }
+                    minLength={key === "phone" ? 11 : undefined}
+                    pattern={key === "phone" ? "[0-9]{11}" : undefined}
+                    placeholder={key === "phone" ? "01XXXXXXXXX" : undefined}
+                    dir={key === "phone" || key === "email" ? "ltr" : "rtl"}
                     className="w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all"
                     style={{
                       borderColor: "rgba(124,58,237,0.2)",
@@ -351,7 +380,8 @@ function LeadFormModal({ onClose }: { onClose: () => void }) {
                 <textarea
                   rows={3}
                   value={form.message}
-                  onChange={e => setForm(f => ({ ...f, message: e.target.value }))}
+                  onChange={e => handleFieldChange("message", e.target.value)}
+                  maxLength={1000}
                   className="w-full px-4 py-3 rounded-xl border text-sm outline-none resize-none"
                   style={{
                     borderColor: "rgba(124,58,237,0.2)", background: "#f8f6ff",
