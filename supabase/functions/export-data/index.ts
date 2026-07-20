@@ -48,11 +48,36 @@ const EXPORTERS: Record<string, (schoolId: string, filters: Record<string, unkno
     return data ?? [];
   },
   waitlist: async () => {
-    const { data } = await admin
+    const { data: waitlistRows } = await admin
       .from("waitlist_signups")
       .select("full_name, email, phone, source, status, contacted_at, created_at")
       .order("created_at", { ascending: false });
-    return data ?? [];
+    const { data: schoolDemoRows } = await admin
+      .from("school_demo_requests")
+      .select("school_name, director_name, phone, email, governorate, student_count, school_type, source, status, contacted_at, created_at")
+      .order("created_at", { ascending: false });
+
+    return [
+      ...((schoolDemoRows ?? []).map((row) => ({
+        lead_type: "school_demo",
+        full_name: row.school_name,
+        school_name: row.school_name,
+        director_name: row.director_name,
+        email: row.email ?? "",
+        phone: row.phone,
+        governorate: row.governorate ?? "",
+        student_count: row.student_count ?? "",
+        school_type: row.school_type ?? "",
+        source: row.source,
+        status: row.status,
+        contacted_at: row.contacted_at,
+        created_at: row.created_at,
+      }))),
+      ...((waitlistRows ?? []).map((row) => ({
+        lead_type: "waitlist",
+        ...row,
+      }))),
+    ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   },
 };
 
@@ -126,8 +151,9 @@ Deno.serve(async (req) => {
 });
 
 function toCsv(rows: any[]): string {
-  if (rows.length === 0) return "";
-  const flat = rows.map(flatten);
+  const normalizedRows = rows.flatMap((row) => (Array.isArray(row) ? row : [row])).filter(Boolean);
+  if (normalizedRows.length === 0) return "";
+  const flat = normalizedRows.map(flatten);
   const headers = Array.from(new Set(flat.flatMap((r) => Object.keys(r))));
   const lines = [headers.join(",")];
   for (const row of flat) {

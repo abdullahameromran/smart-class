@@ -134,6 +134,38 @@ type WaitlistSignup = {
   created_at: string;
 };
 
+type SchoolDemoRequest = {
+  id: string;
+  school_name: string;
+  director_name: string;
+  phone: string;
+  email: string | null;
+  address: string | null;
+  governorate: string | null;
+  student_count: string | null;
+  school_type: string | null;
+  message: string | null;
+  agreed_to_contact: boolean;
+  source: string;
+  status: string;
+  contacted_at: string | null;
+  created_at: string;
+};
+
+type WaitlistLead = {
+  id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  source: string;
+  status: string;
+  contacted_at: string | null;
+  created_at: string;
+  lead_kind: "waitlist" | "school_demo";
+  school_name?: string | null;
+  director_name?: string | null;
+};
+
 type PlatformCounts = {
   profiles: number;
   role_assignments: number;
@@ -526,7 +558,7 @@ type SuperAdminData = {
   profiles: PlatformProfile[];
   roleRows: RoleRow[];
   auditLogs: AuditLogRecord[];
-  waitlist: WaitlistSignup[];
+  waitlist: WaitlistLead[];
   counts: PlatformCounts;
 };
 
@@ -1318,6 +1350,7 @@ async function loadSuperAdminData() {
     roleRows,
     auditLogs,
     waitlist,
+    schoolDemoRequests,
     classCount,
     subjectCount,
     lessonCount,
@@ -1356,6 +1389,11 @@ async function loadSuperAdminData() {
       .select("id,full_name,email,phone,source,status,contacted_at,created_at")
       .order("created_at", { ascending: false })
       .limit(200),
+    supabase
+      .from("school_demo_requests")
+      .select("id,school_name,director_name,phone,email,address,governorate,student_count,school_type,message,agreed_to_contact,source,status,contacted_at,created_at")
+      .order("created_at", { ascending: false })
+      .limit(200),
     fetchExactCount("classes"),
     fetchExactCount("subjects"),
     fetchExactCount("lessons"),
@@ -1372,6 +1410,28 @@ async function loadSuperAdminData() {
   const roleRowsData = (unwrap(roleRows) as unknown) as RoleRow[];
   const auditRows = (unwrap(auditLogs) as unknown) as AuditLogRecord[];
   const waitlistRows = (unwrap(waitlist) as unknown) as WaitlistSignup[];
+  const schoolDemoRows = (unwrap(schoolDemoRequests) as unknown) as SchoolDemoRequest[];
+  const waitlistLeads = [
+    ...schoolDemoRows.map<WaitlistLead>((row) => ({
+      id: row.id,
+      full_name: row.school_name,
+      email: row.email ?? "No email provided",
+      phone: row.phone,
+      source: row.source,
+      status: row.status,
+      contacted_at: row.contacted_at,
+      created_at: row.created_at,
+      lead_kind: "school_demo",
+      school_name: row.school_name,
+      director_name: row.director_name,
+    })),
+    ...waitlistRows.map<WaitlistLead>((row) => ({
+      ...row,
+      lead_kind: "waitlist",
+      school_name: null,
+      director_name: null,
+    })),
+  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   const statsBySchoolId = statsRows.reduce<Record<string, SchoolUsageStat>>((acc, row) => {
     acc[row.school_id] = row;
     return acc;
@@ -1427,7 +1487,7 @@ async function loadSuperAdminData() {
     profiles: profileRows,
     roleRows: roleRowsData,
     auditLogs: auditRows,
-    waitlist: waitlistRows,
+    waitlist: waitlistLeads,
     counts: {
       profiles: profileRows.length,
       role_assignments: roleRowsData.length,
@@ -1438,7 +1498,7 @@ async function loadSuperAdminData() {
       lessons: lessonCount,
       announcements: announcementCount,
       messages: messageCount,
-      waitlist: waitlistRows.length,
+      waitlist: waitlistLeads.length,
     },
   } satisfies SuperAdminData;
 }
@@ -5390,11 +5450,14 @@ function SuperAdminPortal({
                   recentWaitlist.map((lead) => (
                     <div key={lead.id} className="rounded-2xl border border-border bg-muted/25 p-4">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-semibold">{lead.full_name}</p>
+                        <p className="font-semibold">{lead.school_name ?? lead.full_name}</p>
                         <Badge tone={lead.contacted_at ? "success" : "warning"}>
                           {lead.contacted_at ? "Contacted" : titleCaseLabel(lead.status)}
                         </Badge>
                       </div>
+                      {lead.director_name ? (
+                        <p className="mt-2 text-sm text-muted-foreground">Director: {lead.director_name}</p>
+                      ) : null}
                       <p className="mt-2 text-sm text-muted-foreground">
                         {lead.email} / {lead.phone}
                       </p>
@@ -6379,11 +6442,14 @@ function SuperAdminPortal({
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                         <div>
                           <div className="flex flex-wrap items-center gap-2">
-                            <p className="font-semibold">{lead.full_name}</p>
+                            <p className="font-semibold">{lead.school_name ?? lead.full_name}</p>
                             <Badge tone={lead.contacted_at ? "success" : "warning"}>
                               {lead.contacted_at ? "Contacted" : titleCaseLabel(lead.status)}
                             </Badge>
                           </div>
+                          {lead.director_name ? (
+                            <p className="mt-2 text-sm text-muted-foreground">Director: {lead.director_name}</p>
+                          ) : null}
                           <p className="mt-2 text-sm text-muted-foreground">
                             {lead.email} / {lead.phone}
                           </p>
