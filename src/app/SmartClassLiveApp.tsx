@@ -35,7 +35,7 @@ import smartClassLogo from "@/IMG-20260716-WA0004.jpg";
 import NibrasLandingPage from "./NibrasLandingPage";
 
 type UserRole = "super_admin" | "school_admin" | "teacher" | "student" | "parent";
-type AuthMode = "signin" | "signup";
+type AuthMode = "signin" | "signup" | "forgot" | "reset";
 type SettingValueType = "text" | "number" | "boolean" | "list" | "pairs";
 type StudentAcademicStatus = "active" | "graduated" | "transferred" | "withdrawn" | "suspended";
 
@@ -737,16 +737,24 @@ function getInitialPath() {
 
 function isPublicPath(path: string) {
   const normalized = normalizePath(path);
-  return normalized === "/" || normalized === "/login" || normalized === "/signup";
+  return normalized === "/" || normalized === "/login" || normalized === "/signup" || normalized === "/forgot-password" || normalized === "/reset-password";
 }
 
 function isAuthPath(path: string) {
   const normalized = normalizePath(path);
-  return normalized === "/login" || normalized === "/signup";
+  return normalized === "/login" || normalized === "/signup" || normalized === "/forgot-password" || normalized === "/reset-password";
+}
+
+function isResetPasswordPath(path: string) {
+  return normalizePath(path) === "/reset-password";
 }
 
 function getAuthModeFromPath(path: string): AuthMode {
-  return normalizePath(path) === "/signup" ? "signup" : "signin";
+  const normalized = normalizePath(path);
+  if (normalized === "/signup") return "signup";
+  if (normalized === "/forgot-password") return "forgot";
+  if (normalized === "/reset-password") return "reset";
+  return "signin";
 }
 
 function getViewFromPath(path: string) {
@@ -3974,18 +3982,21 @@ function LandingPage({
 function AuthScreen({
   mode,
   loading,
+  hasSession,
   onNotify,
-  onModeChange,
+  onNavigateAuthPath,
   onBackHome,
 }: {
   mode: AuthMode;
   loading: boolean;
+  hasSession: boolean;
   onNotify: (kind: "success" | "error" | "info", message: string) => void;
-  onModeChange: (mode: AuthMode) => void;
+  onNavigateAuthPath: (path: string) => void;
   onBackHome: () => void;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [schoolName, setSchoolName] = useState("");
@@ -4000,6 +4011,24 @@ function AuthScreen({
     }
     return error.message || "Something went wrong. Please try again.";
   };
+
+  const authTitle =
+    mode === "signup"
+      ? "Create your school"
+      : mode === "forgot"
+        ? "Reset your password"
+        : mode === "reset"
+          ? "Create a new password"
+          : "Welcome back";
+
+  const authDescription =
+    mode === "signup"
+      ? "Create the school, create the first school admin, and open your workspace in one smooth signup flow."
+      : mode === "forgot"
+        ? "Enter the email on your account and we will send you a password reset link."
+        : mode === "reset"
+          ? "Choose a new password for this account, then sign in again."
+          : "Use your invited account. Magic link is helpful if you do not have a password yet.";
 
   const signIn = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -4018,6 +4047,71 @@ function AuthScreen({
     }
     setAuthAlert({ kind: "success", message: "Signed in successfully." });
     onNotify("success", "Signed in successfully.");
+  };
+
+  const requestPasswordReset = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAuthAlert(null);
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail) {
+      const message = "Enter your email first.";
+      setAuthAlert({ kind: "error", message });
+      onNotify("error", message);
+      return;
+    }
+    setBusy(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    setBusy(false);
+    if (error) {
+      const message = getAuthErrorMessage(error);
+      setAuthAlert({ kind: "error", message });
+      onNotify("error", message);
+      return;
+    }
+    const message = "Password reset link sent. Check your inbox.";
+    setAuthAlert({ kind: "info", message });
+    onNotify("info", message);
+  };
+
+  const saveNewPassword = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAuthAlert(null);
+    if (!hasSession) {
+      const message = "Open the password reset link from your email, then try again.";
+      setAuthAlert({ kind: "error", message });
+      onNotify("error", message);
+      return;
+    }
+    if (password.length < 6) {
+      const message = "Use a password with at least 6 characters.";
+      setAuthAlert({ kind: "error", message });
+      onNotify("error", message);
+      return;
+    }
+    if (password !== confirmPassword) {
+      const message = "The password confirmation does not match.";
+      setAuthAlert({ kind: "error", message });
+      onNotify("error", message);
+      return;
+    }
+    setBusy(true);
+    const { error } = await supabase.auth.updateUser({ password });
+    setBusy(false);
+    if (error) {
+      const message = getAuthErrorMessage(error);
+      setAuthAlert({ kind: "error", message });
+      onNotify("error", message);
+      return;
+    }
+    setPassword("");
+    setConfirmPassword("");
+    const message = "Password updated. You can sign in now.";
+    setAuthAlert({ kind: "success", message });
+    onNotify("success", message);
+    await supabase.auth.signOut();
+    onNavigateAuthPath("/login");
   };
 
   const signUp = async (event: FormEvent<HTMLFormElement>) => {
@@ -4144,7 +4238,7 @@ function AuthScreen({
           <div className="inline-flex rounded-2xl bg-muted p-1 shadow-inner">
             <button
               type="button"
-              onClick={() => onModeChange("signin")}
+              onClick={() => onNavigateAuthPath("/login")}
               className={`rounded-xl px-4 py-2 text-sm font-semibold transition-all duration-300 ${
                 mode === "signin"
                   ? "bg-card text-foreground shadow-sm"
@@ -4155,7 +4249,7 @@ function AuthScreen({
             </button>
             <button
               type="button"
-              onClick={() => onModeChange("signup")}
+              onClick={() => onNavigateAuthPath("/signup")}
               className={`rounded-xl px-4 py-2 text-sm font-semibold transition-all duration-300 ${
                 mode === "signup"
                   ? "bg-card text-foreground shadow-sm"
@@ -4166,12 +4260,8 @@ function AuthScreen({
             </button>
           </div>
 
-          <h2 className="mt-6 text-2xl font-bold">{mode === "signin" ? "Welcome back" : "Create your school"}</h2>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {mode === "signin"
-              ? "Use your invited account. Magic link is helpful if you do not have a password yet."
-              : "Create the school, create the first school admin, and open your workspace in one smooth signup flow."}
-          </p>
+          <h2 className="mt-6 text-2xl font-bold">{authTitle}</h2>
+          <p className="mt-2 text-sm text-muted-foreground">{authDescription}</p>
 
           {authAlert ? (
             <div
@@ -4188,7 +4278,7 @@ function AuthScreen({
             </div>
           ) : null}
 
-          <form className="mt-6 space-y-4" onSubmit={mode === "signin" ? signIn : signUp}>
+          <form className="mt-6 space-y-4" onSubmit={mode === "signin" ? signIn : mode === "signup" ? signUp : mode === "forgot" ? requestPasswordReset : saveNewPassword}>
             {mode === "signup" ? (
               <>
                 <Field label="School name">
@@ -4224,20 +4314,66 @@ function AuthScreen({
                 </div>
               </>
             ) : null}
-            <Field label={mode === "signin" ? "Email" : "Admin email"}>
-              <Input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required />
-            </Field>
-            <Field label={mode === "signin" ? "Password" : "Password for the first school admin"}>
-              <Input value={password} onChange={(event) => setPassword(event.target.value)} type="password" required />
-            </Field>
+            {mode !== "reset" ? (
+              <Field label={mode === "signin" ? "Email" : mode === "signup" ? "Admin email" : "Account email"}>
+                <Input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required />
+              </Field>
+            ) : null}
+            {mode !== "forgot" ? (
+              <Field label={mode === "signin" ? "Password" : mode === "signup" ? "Password for the first school admin" : "New password"}>
+                <Input value={password} onChange={(event) => setPassword(event.target.value)} type="password" required />
+              </Field>
+            ) : null}
+            {mode === "reset" ? (
+              <>
+                <Field label="Confirm new password">
+                  <Input value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" required />
+                </Field>
+                {!hasSession ? (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    This reset screen needs a valid email link. Open the newest password reset link from your inbox.
+                  </div>
+                ) : null}
+              </>
+            ) : null}
             <div className="flex flex-wrap gap-3 pt-2">
               <Button type="submit" disabled={busy || loading} className="min-w-[170px] flex-1">
-                {busy ? (mode === "signin" ? "Signing in..." : "Creating school...") : mode === "signin" ? "Sign in" : "Create school account"}
+                {busy
+                  ? mode === "signin"
+                    ? "Signing in..."
+                    : mode === "signup"
+                      ? "Creating school..."
+                      : mode === "forgot"
+                        ? "Sending link..."
+                        : "Saving password..."
+                  : mode === "signin"
+                    ? "Sign in"
+                    : mode === "signup"
+                      ? "Create school account"
+                      : mode === "forgot"
+                        ? "Send reset link"
+                        : "Save new password"}
               </Button>
-              <Button type="button" variant="secondary" onClick={sendMagicLink} disabled={busy || loading}>
-                Send magic link
-              </Button>
+              {mode === "signin" ? (
+                <Button type="button" variant="secondary" onClick={sendMagicLink} disabled={busy || loading}>
+                  Send magic link
+                </Button>
+              ) : null}
+              {mode === "forgot" || mode === "reset" ? (
+                <Button type="button" variant="secondary" onClick={() => onNavigateAuthPath("/login")} disabled={busy || loading}>
+                  Back to login
+                </Button>
+              ) : null}
             </div>
+            {mode === "signin" ? (
+              <button
+                type="button"
+                onClick={() => onNavigateAuthPath("/forgot-password")}
+                className="text-sm font-medium text-primary transition hover:opacity-80"
+              >
+                Forgot password?
+              </button>
+            ) : null}
           </form>
         </div>
       </div>
@@ -9126,6 +9262,31 @@ function SchoolAdminPortalModern({
     }, "Teacher assignment removed.");
   };
 
+  const removeTeacherAccess = () => {
+    if (!selectedTeacher) return;
+    if (!window.confirm(`Remove ${selectedTeacher.name} from ${data.school.name}? They will lose teacher access in this school.`)) {
+      return;
+    }
+    void runAction(async () => {
+      unwrap(
+        await supabase
+          .from("teacher_subject_assignments")
+          .delete()
+          .eq("school_id", data.school.id)
+          .eq("teacher_id", selectedTeacher.userId),
+      );
+      unwrap(
+        await supabase
+          .from("user_school_roles")
+          .delete()
+          .eq("school_id", data.school.id)
+          .eq("user_id", selectedTeacher.userId)
+          .eq("role", "teacher"),
+      );
+      setActiveTeacherId(null);
+    }, "Teacher removed from this school.");
+  };
+
   const openStudentPopup = (student: SchoolAdminStudent) => {
     setActiveStudentId(student.userId);
     setStudentEditForm({
@@ -9947,6 +10108,16 @@ function SchoolAdminPortalModern({
                   </Button>
                 </div>
               </form>
+            </Panel>
+            <Panel title="Remove Teacher Access" description="Use this when a temporary or duplicate teacher account should no longer access this school.">
+              <div className="flex flex-col gap-4 rounded-[1.7rem] bg-muted/20 p-5 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-muted-foreground">
+                  This removes the teacher role and teaching assignments for this school only. The user account itself is kept safely in case it is used elsewhere.
+                </p>
+                <Button type="button" variant="danger" onClick={removeTeacherAccess} disabled={busy}>
+                  Remove teacher
+                </Button>
+              </div>
             </Panel>
           </PopupModal>
         ) : null}
@@ -14148,7 +14319,10 @@ export default function SmartClassLiveApp() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === "PASSWORD_RECOVERY") {
+        navigateTo("/reset-password", true);
+      }
       setSession(nextSession);
     });
 
@@ -14210,6 +14384,10 @@ export default function SmartClassLiveApp() {
       if (!isPublicPath(pathname)) {
         navigateTo("/login", true);
       }
+      return;
+    }
+
+    if (isResetPasswordPath(pathname)) {
       return;
     }
 
@@ -14302,9 +14480,23 @@ export default function SmartClassLiveApp() {
     return (
       <AuthScreen
         mode={getAuthModeFromPath(pathname)}
+        hasSession={false}
         loading={membershipLoading || dataLoading}
         onNotify={notify}
-        onModeChange={(mode) => navigateTo(mode === "signup" ? "/signup" : "/login")}
+        onNavigateAuthPath={(nextPath) => navigateTo(nextPath)}
+        onBackHome={() => navigateTo("/")}
+      />
+    );
+  }
+
+  if (isResetPasswordPath(pathname)) {
+    return (
+      <AuthScreen
+        mode="reset"
+        hasSession={true}
+        loading={false}
+        onNotify={notify}
+        onNavigateAuthPath={(nextPath) => navigateTo(nextPath)}
         onBackHome={() => navigateTo("/")}
       />
     );
